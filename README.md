@@ -1,301 +1,245 @@
-# Card Fraud Triage: Unsupervised Anomaly Detection
+# Card Fraud Triage: Unsupervised Density-Based Anomaly Detection
 
-Probabilistic density estimation pipeline for credit card fraud detection and risk triage under extreme class imbalance.
+<div align="center">
 
----
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=for-the-badge&logo=python&logoColor=white)
+![Scikit-Learn](https://img.shields.io/badge/Scikit--Learn-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white)
+![NumPy](https://img.shields.io/badge/NumPy-013243?style=for-the-badge&logo=numpy&logoColor=white)
+![Pandas](https://img.shields.io/badge/Pandas-150458?style=for-the-badge&logo=pandas&logoColor=white)
+![Jupyter](https://img.shields.io/badge/Jupyter-F3762D?style=for-the-badge&logo=jupyter&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)
 
-## Overview
+**An end-to-end unsupervised anomaly detection and alert triage pipeline for credit card fraud detection using full-covariance Gaussian Mixture Models (GMM) on severely imbalanced financial transaction streams.**
 
-Credit card fraud detection presents two fundamental engineering challenges:
-1. **Extreme Class Imbalance:** Fraudulent transactions typically constitute less than 0.2% of total transaction volume (in this benchmark, 0.173%, or a 578:1 ratio). Conventional supervised classifiers tend to overfit historical patterns or collapse toward majority-class predictions without aggressive, synthetic resampling.
-2. **Adversarial Non-Stationarity:** Fraud patterns evolve rapidly. Supervised decision boundaries trained on known fraud typologies often fail to generalize to novel attack vectors.
-
-This project implements an unsupervised anomaly detection framework based on **Gaussian Mixture Models (GMM)**. Rather than attempting to learn a boundary around sparse, noisy fraud labels, the model estimates the generative probability density distribution $p(\mathbf{x})$ of strictly legitimate transaction behavior. Incoming transactions are evaluated via negative log-likelihood:
-
-$$\mathcal{S}(\mathbf{x}) = -\ln p(\mathbf{x}) = -\ln \sum_{j=1}^{k} \pi_j \mathcal{N}\left(\mathbf{x} \mid \boldsymbol{\mu}_j, \boldsymbol{\Sigma}_j\right)$$
-
-Transactions yielding extreme negative log-likelihoods ($-\ln p(\mathbf{x}) > \tau$) represent statistical deviations from legitimate behavior and are routed to prioritized human investigator queues.
+</div>
 
 ---
 
-## Technical Architecture & Pipeline
+## Executive Summary
 
-The pipeline is organized into modular stages to guarantee reproducibility, prevent temporal data leakage, and support automated evaluation:
+Credit card fraud detection operates under extreme class imbalance (`0.173%` positive fraud rate, or a `577.9 : 1` legitimate-to-fraud ratio) and non-stationary attacker behavior. Supervised classifiers trained on historical fraud labels frequently overfit to known attack signatures and degrade when confronted with novel fraud patterns.
 
+This project implements a strictly **unsupervised density estimation and alert triage framework** using **Gaussian Mixture Models (GMM)**. By fitting a multimodal probability density exclusively on chronological legitimate transactions across 29 behavioral features (`V1`-`V28` and `Amount`), the system scores incoming transactions via negative log-likelihood (`-log p(x)`).
+
+### Results at a Glance
+
+| Metric | Value | Operational Interpretation |
+| :--- | :---: | :--- |
+| **Test PR-AUC** | **0.4736** | **359.7x lift** over random baseline (`0.0013`) |
+| **Test ROC-AUC** | **0.9106** | Strong global ranking separation (`0.5000` baseline) |
+| **Recall @ FPR <= 0.1%** | **76.00%** | 57/75 frauds caught at **50.00% precision** (only 57 false alarms) |
+| **Recall @ FPR <= 0.5%** | **78.67%** | 59/75 frauds caught (285 false alarms across 56,887 legit txs) |
+| **Top-100 Alert Queue** | **57 / 75 Caught** | **57.00% Precision@100** & **76.00% Recall@100** (**432.9x lift**) |
+
+---
+
+## End-to-End Pipeline Architecture
+
+```mermaid
+flowchart TD
+    A["Raw Transactions (284,807 rows, 31 cols)"] --> B["Data Audit & Invariant Assertions (src/data_audit.py)"]
+    B --> C["Chronological Sort by Time & Drop Time Feature (src/preprocess.py)"]
+    C --> D["Train Split 60% (170,884 total rows)"]
+    C --> E["Validation Split 20% (56,961 rows, 57 frauds)"]
+    C --> F["Test Split 20% (56,962 rows, 75 frauds)"]
+    D --> G["Filter Class == 0 Only (170,524 legit rows, 29 features)"]
+    G --> H["Fit StandardScaler (29 features: V1-V28, Amount)"]
+    H --> I["AIC/BIC Sweep k=1..10 & Train Final GMM (k=10, n_init=5)"]
+    I --> J["Serialized Artifacts (models/scaler.joblib, models/best_gmm.joblib)"]
+    H --> E
+    H --> F
+    J --> E
+    J --> F
+    E --> K["Validation Threshold Calibration (1st-Pct LL = -51.9057)"]
+    F --> L["Held-Out Test Triage Evaluation (PR-AUC = 0.4736, ROC-AUC = 0.9106)"]
 ```
+
+---
+
+## Repository Structure
+
+```text
 card-fraud-triage/
 ├── data/
-│   ├── raw/                  # Source CSV datasets (git-ignored)
-│   │   └── creditcard.csv    # Benchmark dataset (284,807 transactions)
-│   └── processed/            # Chronologically partitioned sets (git-ignored)
-│       ├── train_legit.csv   # 60% partition: strictly Class == 0 (170,524 samples)
-│       ├── val.csv           # 20% partition: mixed validation set (56,961 samples)
-│       └── test.csv          # 20% partition: held-out mixed test set (56,962 samples)
-├── models/                   # Serialized inference artifacts
-│   ├── best_gmm.joblib       # Fitted Gaussian Mixture Model (k=7, full covariance)
-│   └── scaler.joblib         # Fitted StandardScaler artifact
-├── notebooks/                # Exploratory and experimental workflows
-│   ├── 01_eda_and_quality.ipynb      # EDA, feature distributions, imbalance analysis
-│   ├── gmm_model_selection.ipynb     # AIC/BIC component sweep and validation tuning
-│   └── final_evaluation.ipynb        # Test PR-AUC, ROC-AUC, and triage metrics
-├── src/                      # Production scripts
-│   ├── data_audit.py         # Integrity, duplicate, and null-value verification
-│   └── preprocess.py         # Chronological sorting and leakage-free splitting
-├── Project_Plan.md           # Implementation milestones and technical specification
-├── requirements.txt          # Python dependencies
-└── README.md                 # System documentation
-```
-
-### End-to-End Workflow
-
-```
-[Raw Transactions: creditcard.csv]
-               │
-               ▼
-[Chronological Sort by Time]  ──> Prevents temporal lookahead leakage
-               │
-               ├─────────────────────────┬─────────────────────────┐
-               ▼                         ▼                         ▼
-      [Train: 60% Chrono]       [Val: 20% Chrono]         [Test: 20% Chrono]
-               │                         │                         │
-     [Filter Class == 0]                 │                         │
-     (170,524 Legit Txs)                 │                         │
-               │                         │                         │
-               ▼                         │                         │
-      [Fit StandardScaler] ──────────────┼─────────────────────────┤
-               │ (transform)             │ (transform)             │ (transform)
-               ▼                         ▼                         ▼
-   [Scale Train Features]      [Scale Val Features]      [Scale Test Features]
-               │                         │                         │
-               ▼                         │                         │
-     [GMM Optimization]                  │                         │
-      (AIC/BIC Grid: k=7)                │                         │
-               │                         │                         │
-               ▼                         ▼                         ▼
-     [Serialized Artifacts]   [Threshold Calibration]   [Operational Evaluation]
-     - best_gmm.joblib        - 1st Percentile Cutoff   - PR-AUC: 0.3622
-     - scaler.joblib          - Fixed FPR Budgets       - Precision@K Triage
+│   ├── raw/
+│   │   ├── .gitkeep                     # Preserves directory structure in fresh clones
+│   │   └── creditcard.csv               # Raw ULB dataset (284,807 rows, git-ignored)
+│   └── processed/
+│       ├── .gitkeep                     # Preserves directory structure in fresh clones
+│       ├── train_legit.csv              # 170,524 legit rows x 29 features (git-ignored)
+│       ├── val.csv                      # 56,961 rows x 30 cols [29 features + Class]
+│       └── test.csv                     # 56,962 rows x 30 cols [29 features + Class]
+├── models/
+│   ├── scaler.joblib                    # Fitted StandardScaler (29 features)
+│   └── best_gmm.joblib                  # Fitted GaussianMixture (k=10, full covariance)
+├── notebooks/
+│   ├── 01_eda_and_quality.ipynb         # Class imbalance, amount skewness, PCA separation
+│   ├── gmm_model_selection.ipynb        # AIC/BIC sweep, training, validation calibration
+│   └── final_evaluation.ipynb           # Held-out test PR/ROC curves & triage tables
+├── src/
+│   ├── __init__.py                      # Python package marker
+│   ├── data_audit.py                    # Schema, integrity, and invariant assertions
+│   └── preprocess.py                    # Chronological splitting and feature pruning
+├── .gitignore
+├── LICENSE
+├── requirements.txt
+└── README.md
 ```
 
 ---
 
-## Data Engineering & Leakage Prevention
+## Data Engineering & Anti-Leakage Discipline
 
-The benchmark dataset consists of **284,807 transactions** across 30 numerical features (28 PCA components `V1`–`V28`, transaction `Time`, and `Amount`).
+### 1. Chronological Partitioning Summary
+Randomly shuffling time-series financial transactions introduces lookahead leakage. `src/preprocess.py` sorts all `284,807` transactions chronologically by `Time` before executing a strict `60% / 20% / 20%` split:
 
-To ensure real-world validity, three strict engineering safeguards are enforced:
-1. **Chronological Splitting:** Financial transaction streams exhibit temporal dependencies. Shuffling or standard k-fold cross-validation causes future-to-past data leakage. The dataset is sorted by `Time` and segmented into:
-   - **Training Set (60%):** 170,884 chronological transactions.
-   - **Validation Set (20%):** 56,961 chronological transactions.
-   - **Held-Out Test Set (20%):** 56,962 chronological transactions.
-2. **Semi-Supervised Class Isolation:** To ensure pure one-class density estimation, all fraudulent records are purged from the training set. Only legitimate transactions (`Class == 0`, 170,524 rows) are retained. The label column is removed prior to model fitting.
-3. **Leakage-Free Feature Scaling:** `StandardScaler` is fitted strictly on the legitimate training features and applied via `transform()` to the validation and test sets.
+- **Training Set (60%):** `170,884` chronological transactions (`170,524` legitimate rows retained in `train_legit.csv` after filtering to `Class == 0` and excluding `360` fraud records).
+- **Validation Set (20%):** `56,961` transactions (`56,904` legitimate, `57` fraudulent [`0.100%`]).
+- **Test Set (20%):** `56,962` transactions (`56,887` legitimate, `75` fraudulent [`0.132%`]).
 
----
+| Partition | File | Total Rows | Legitimate (`Class=0`) | Fraud (`Class=1`) | Fraud Rate | Features ($X$) |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| **Raw Dataset** | `creditcard.csv` | 284,807 | 284,315 | 492 | 0.173% | 29 (`Time` used only for sort) |
+| **Train (60% Raw)** | *(Pre-filter)* | 170,884 | 170,524 | 360 *(excluded)* | 0.211% | - |
+| **Train Legit** | `train_legit.csv` | **170,524** | **170,524** | **0** | **0.000%** | **29 (`V1`-`V28`, `Amount`)** |
+| **Validation (20%)** | `val.csv` | **56,961** | 56,904 | 57 | 0.100% | 29 (`V1`-`V28`, `Amount`) |
+| **Test (20%)** | `test.csv` | **56,962** | 56,887 | 75 | 0.132% | 29 (`V1`-`V28`, `Amount`) |
 
-## Model Selection & Mathematical Formulation
-
-### Gaussian Mixture Model (GMM)
-
-Legitimate credit card behavior forms complex, multi-modal clusters across merchant types, transaction frequencies, and expenditure levels. A single multivariate Gaussian fails to capture this structure. We model transaction space as a mixture of $k$ multivariate Gaussians:
-
-$$p(\mathbf{x}) = \sum_{j=1}^{k} \pi_j \mathcal{N}\left(\mathbf{x} \mid \boldsymbol{\mu}_j, \boldsymbol{\Sigma}_j\right)$$
-
-where:
-- $\pi_j$ is the mixing weight for component $j$, with $\sum_{j=1}^{k} \pi_j = 1$ and $\pi_j \ge 0$.
-- $\boldsymbol{\mu}_j \in \mathbb{R}^{d}$ is the mean vector of component $j$.
-- $\boldsymbol{\Sigma}_j \in \mathbb{R}^{d \times d}$ is the full covariance matrix, capturing inter-feature dependencies across principal components and transaction amounts.
-
-Parameters $\Theta = \{\pi_j, \boldsymbol{\mu}_j, \boldsymbol{\Sigma}_j\}_{j=1}^{k}$ are estimated via the Expectation-Maximization (EM) algorithm with full covariance structures.
-
-### Component Sweep ($k$) via AIC and BIC
-
-The number of mixture components $k$ balances model expressiveness against overfitting. We evaluated $k \in \{1, 2, \dots, 10\}$ using the Akaike Information Criterion (AIC) and Bayesian Information Criterion (BIC):
-
-$$\text{AIC} = 2m - 2\ln \hat{L}$$
-
-$$\text{BIC} = \ln(N)m - 2\ln \hat{L}$$
-
-where $m$ denotes the number of free parameters, $N$ is sample size ($N = 170,524$), and $\hat{L}$ is the maximized likelihood.
-
-- **Outcome:** While AIC continues to drop monotonically due to weak parameter penalties on large sample sizes, BIC exhibits an elbow stabilization around **$k = 7$**. Selecting $k=7$ provides optimal representation of legitimate spending modes while avoiding parameter explosion.
+### 2. Elimination of Temporal Recording Leakage (`Time`)
+In the raw dataset, `Time` measures seconds elapsed since the first recorded transaction (`0s` to `172,792s`). Under a chronological split, `Time` spans non-overlapping intervals across Train (`0s`-`~103,000s`), Validation, and Test (`~138,000s`-`172,792s`). Retaining `Time` in a density estimator causes severe covariate shift: the GMM assigns artificially low likelihoods to test transactions simply because their timestamps fall outside the training window. Dropping `Time` after sorting isolates true behavioral anomalies across the 29 remaining features (`V1`-`V28` and `Amount`).
 
 ---
 
-## Evaluation & Operational Triage Metrics
+## Mathematical Formulation & Model Selection
 
-Under a 0.132% test prevalence (75 fraud cases out of 56,962 transactions), standard accuracy is uninformative (a naive null predictor achieves 99.87% accuracy while missing 100% of fraud). 
+### 1. Multimodal Density Estimation & Anomaly Scoring
+Legitimate cardholder behavior spans multiple distinct transaction regimes. We model the legitimate feature vector $\mathbf{x} \in \mathbb{R}^{29}$ as a mixture of $K$ multivariate Gaussians estimated via Expectation-Maximization (EM):
 
-The system is evaluated against triage capacity constraints: **Precision-Recall AUC (PR-AUC)**, **Recall at Fixed False Positive Rates (FPR)**, and **Precision@K**.
+$$p(\mathbf{x}) = \sum_{k=1}^{K} \pi_k \, \mathcal{N}(\mathbf{x} \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k), \qquad s(\mathbf{x}) = -\log p(\mathbf{x})$$
 
-### Summary Performance (Test Set: 56,962 Transactions, 75 Fraud Cases)
+where $\pi_k > 0$ ($\sum_{k=1}^K \pi_k = 1$) are mixture weights, $\boldsymbol{\mu}_k \in \mathbb{R}^{29}$ are component means, $\boldsymbol{\Sigma}_k \in \mathbb{R}^{29 \times 29}$ are full unconstrained covariance matrices, and $s(\mathbf{x})$ is the anomaly score.
 
-| Metric | Result | Baseline / Comparison |
-| :--- | :--- | :--- |
-| **PR-AUC (Average Precision)** | **0.3622** | Random chance baseline = 0.00132 (274x lift) |
-| **ROC-AUC** | **0.9065** | Random chance baseline = 0.5000 |
-| **Train Score 1st Percentile Cutoff** | **$-58.66$** | Recall = 76.00%, Specificity = 97.91% |
+### 2. Information-Theoretic Component Selection ($k = 1 \dots 10$)
+To balance model expressiveness against parameter complexity across $D = 29$ dimensions ($464$ free parameters per component plus mixture weights), we evaluate Akaike Information Criterion ($\text{AIC} = 2P - 2\ln\hat{L}$) and Bayesian Information Criterion ($\text{BIC} = P\ln(N) - 2\ln\hat{L}$) on `170,524` scaled legitimate training transactions:
 
-### 1. Alert Budget Constraints: Recall at Fixed False Positive Rates
-
-Financial institutions must limit false alerts to prevent investigator burnout and customer friction. Operating points are defined by strict False Positive Rate budgets:
-
-| Target FPR Budget | Actual Test FPR | Test Recall (TPR) | Anomaly Cutoff ($-\ln p$) | Operational Application |
+| Components ($k$) | AIC | BIC | $\Delta$ BIC (vs. $k-1$) | Notes |
 | :---: | :---: | :---: | :---: | :--- |
-| **$\le 0.1\%$** | **$0.091\%$** | **$56.00\%$** | $\ge 151.26$ | Automated step-up authentication / immediate card block |
-| **$\le 0.5\%$** | **$0.468\%$** | **$72.00\%$** | $\ge 76.35$ | High-priority investigator review queue |
-| **$\le 1.0\%$** | **$0.986\%$** | **$74.67\%$** | $\ge 64.89$ | Daily comprehensive risk audit queue |
+| **1** | `13,356,086.41` | `13,360,748.05` | - | Unimodal Gaussian baseline |
+| **2** | `12,180,506.25` | `12,189,839.57` | `-1,170,908.48` | Initial multimodal separation |
+| **3** | `9,941,768.82` | `9,955,773.83` | `-2,234,065.74` | Captures primary transaction clusters |
+| **4** | `1,599,082.15` | `1,617,758.83` | `-8,338,015.00` | Largest single-step BIC reduction |
+| **5** | `-5,050,350.59` | `-5,027,002.22` | `-6,644,761.05` | Strong density fit improvement |
+| **6** | `-1,983,424.04` | `-1,955,403.98` | `+3,071,598.24` | Single-init EM (`n_init=1`) local optimum |
+| **7** | `-7,275,442.54` | `-7,242,750.80` | `-5,287,346.82` | Resumes steep descent |
+| **8** | `-8,635,744.41` | `-8,598,380.99` | `-1,355,630.19` | High-density tail refinement |
+| **9** | `-8,799,732.95` | `-8,757,697.85` | `-159,316.86` | Beginning of convergence plateau |
+| **10** | **`-9,820,186.41`** | **`-9,773,479.62`** | **`-1,015,781.77`** | **Global AIC & BIC minimum (Selected)** |
 
-*Insight:* At a strict false-positive budget of under 0.1% (less than 1 false alarm per 1,000 legitimate transactions), the model intercepts **56.00%** of all fraudulent transactions.
-
-### 2. Review Capacity Constraints: Precision@K and Recall@K
-
-When fraud operations teams operate with fixed daily case review bandwidth, ranking alerts by anomaly score yields the following yields:
-
-| Review Capacity ($K$ Alerts) | Frauds Caught | Precision@K | Recall@K | Review Efficiency |
-| :---: | :---: | :---: | :---: | :--- |
-| **Top-50 Alerts** | 24 / 75 | **48.00%** | **32.00%** | ~1 fraud detected per 2.08 reviews |
-| **Top-100 Alerts** | 42 / 75 | **42.00%** | **56.00%** | Captures over half of all frauds in 100 alerts |
-| **Top-200 Alerts** | 49 / 75 | **24.50%** | **65.33%** | Captures nearly two-thirds of all fraud |
-| **Top-500 Alerts** | 55 / 75 | **11.00%** | **73.33%** | High coverage for expanded investigative teams |
-
-### 3. Classification Performance at Validation Cutoff ($\tau = 58.66$)
-
-Using the threshold determined from the 1st percentile of training scores (thresholding at $-\ln p(\mathbf{x}) \ge 58.66$):
-
-```
-Confusion Matrix (Test Partition):
-┌──────────────────────────┬──────────────────────────┐
-│ True Negative: 55,696    │ False Positive: 1,191    │
-├──────────────────────────┼──────────────────────────┤
-│ False Negative: 18       │ True Positive: 57        │
-└──────────────────────────┴──────────────────────────┘
-
-Detailed Test Set Classification Report:
-              Precision    Recall    F1-Score    Support
-Class 0 (Legit)  0.9997    0.9791      0.9893      56,887
-Class 1 (Fraud)  0.0457    0.7600      0.0862          75
-       Accuracy                        0.9788      56,962
-      Macro Avg  0.5227    0.8695      0.5377      56,962
-   Weighted Avg  0.9984    0.9788      0.9881      56,962
-```
+The final estimator is trained at **`k = 10`** with **`covariance_type="full"`**, **`n_init = 5`** (to prevent single-initialization EM local optima such as the spike at $k=6$), and **`random_state = 42`**.
 
 ---
 
-## Tech Stack & Dependencies
+## Held-Out Test Set Performance & Triage Results
 
-- **Language:** Python 3.10+
-- **Machine Learning & Preprocessing:** `scikit-learn` (v1.3+), `scipy` (v1.10+)
-- **Data Manipulation:** `pandas` (v2.0+), `numpy` (v1.24+)
-- **Model Serialization:** `joblib`
-- **Visualization:** `matplotlib` (v3.7+), `seaborn` (v0.12+)
-- **Interactive Development:** `jupyterlab` (v4.0+)
+Evaluated on `data/processed/test.csv` (`56,962` transactions: `75` fraudulent, `56,887` legitimate):
 
----
+### 1. Performance at Fixed False Positive Rate (FPR) Budgets
+In production payment processing, fraud rules are constrained by maximum allowable customer friction (False Positive Rate):
 
-## Installation & Setup
+| FPR Budget | Actual Test FPR | Anomaly Score Cutoff | Fraud Caught (`TP`) | False Alarms (`FP`) | Recall | Precision |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`<= 0.1%`** | `0.10%` | `89.89` | `57 / 75` | `57` | **76.00%** | **50.00%** |
+| **`<= 0.5%`** | `0.50%` | `63.52` | `59 / 75` | `285` | **78.67%** | **17.15%** |
+| **`<= 1.0%`** | `1.00%` | `55.55` | `59 / 75` | `569` | **78.67%** | **9.39%** |
 
-### 1. Environment Configuration
+### 2. Analyst Alert Queue Triage (`Precision@K` & `Recall@K`)
+When fraud operations teams review a fixed daily capacity of the top $K$ highest-scoring alerts:
 
-Clone the repository and initialize a virtual environment:
+| Alert Queue Capacity ($K$) | True Frauds Caught (`TP`) | Precision@$K$ | Recall@$K$ | Lift vs. Random (`0.132%`) |
+| :---: | :---: | :---: | :---: | :---: |
+| **Top-50** | `29 / 75` | **58.00%** | `38.67%` | **440.5x** |
+| **Top-100** | `57 / 75` | **57.00%** | **76.00%** | **432.9x** |
+| **Top-200** | `58 / 75` | `29.00%` | **77.33%** | **220.3x** |
+| **Top-500** | `59 / 75` | `11.80%` | **78.67%** | **89.6x** |
 
-```bash
-git clone https://github.com/<your-username>/card-fraud-triage.git
-cd card-fraud-triage
+### 3. Evaluation at the 1st-Percentile Training Threshold (`LL < -51.9057`)
+Applying the unsupervised 1st-percentile training log-likelihood cutoff directly to the test set:
 
-python3 -m venv venv
-source venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-### 2. Dataset Preparation
-
-1. Download the Credit Card Fraud Detection dataset from Kaggle (`creditcard.csv`).
-2. Place the raw CSV file in `data/raw/`:
-   ```bash
-   mkdir -p data/raw data/processed models
-   # Move downloaded file to data/raw/creditcard.csv
-   ```
-3. Execute the data audit script to verify schema consistency, missing values, and integrity:
-   ```bash
-   python src/data_audit.py
-   ```
-
-### 3. Chronological Preprocessing
-
-Generate the temporal, leakage-free partitions:
-
-```bash
-python src/preprocess.py
-```
-
-This creates:
-- `data/processed/train_legit.csv`: Unsupervised legitimate training set.
-- `data/processed/val.csv`: Mixed validation set for threshold tuning.
-- `data/processed/test.csv`: Held-out mixed test set for final reporting.
-
-### 4. Running Model Selection & Evaluation
-
-Launch JupyterLab to inspect or re-execute the experimental notebooks:
-
-```bash
-jupyter lab
-```
-
-Execute the notebooks in sequence:
-1. `notebooks/01_eda_and_quality.ipynb`: Exploratory data analysis and feature distributions.
-2. `notebooks/gmm_model_selection.ipynb`: AIC/BIC hyperparameter search, component selection ($k=7$), and artifact serialization (`models/best_gmm.joblib`, `models/scaler.joblib`).
-3. `notebooks/final_evaluation.ipynb`: Held-out test evaluation, PR-AUC plotting, and queue triage metric computation.
+| Metric / Quadrant | Count / Score | Operational Meaning |
+| :--- | :---: | :--- |
+| **True Negatives (`TN`)** | `56,054` | Legitimate transactions cleared (`98.54%` specificity) |
+| **False Positives (`FP`)** | `833` | Legitimate transactions flagged (`1.46%` test FPR) |
+| **False Negatives (`FN`)** | `16` | Fraudulent transactions missed (`21.33%` miss rate) |
+| **True Positives (`TP`)** | `59 / 75` | **Fraudulent transactions caught (`78.67%` recall)** |
+| **Fraud Precision / Recall / F1** | `0.0661` / `0.7867` / `0.1220` | Uncalibrated 1st-percentile operating point |
 
 ---
 
-## Production Scoring Snippet
-
-To load the trained artifacts and score incoming transactions in an operational pipeline:
+## Production Inference Snippet
 
 ```python
 import joblib
-import numpy as np
 import pandas as pd
 
-# 1. Load serialized inference artifacts
+# Load serialized preprocessing scaler and trained GMM (29 features: V1-V28, Amount)
 scaler = joblib.load("models/scaler.joblib")
-model = joblib.load("models/best_gmm.joblib")
+gmm = joblib.load("models/best_gmm.joblib")
 
-# 2. Prepare incoming transactions (must contain identical 30 features)
-incoming_txs = pd.DataFrame(...)  # Features: Time, V1-V28, Amount
-scaled_features = scaler.transform(incoming_txs)
+FEATURE_COLS = [f"V{i}" for i in range(1, 29)] + ["Amount"]
+FPR_01PCT_CUTOFF = 89.89  # Calibrated for <= 0.10% False Positive Rate (50% Precision, 76% Recall)
 
-# 3. Compute anomaly scores via negative log-likelihood
-# Lower density under GMM -> Higher anomaly score
-anomaly_scores = -model.score_samples(scaled_features)
 
-# 4. Route based on operational triage thresholds
-# Thresholds derived from validation tuning:
-THRESH_CRITICAL = 151.26  # FPR <= 0.1% budget -> Immediate block
-THRESH_REVIEW   = 76.35   # FPR <= 0.5% budget -> Priority human queue
-THRESH_AUDIT    = 58.66   # 1st percentile cutoff -> General triage queue
+def score_transactions(incoming_txs: pd.DataFrame) -> pd.DataFrame:
+    """Compute unsupervised GMM anomaly scores and binary triage alerts on 29 features."""
+    X_scaled = scaler.transform(incoming_txs[FEATURE_COLS])
+    anomaly_scores = -gmm.score_samples(X_scaled)
 
-def triage_transaction(score):
-    if score >= THRESH_CRITICAL:
-        return "ACTION_BLOCK"
-    elif score >= THRESH_REVIEW:
-        return "QUEUE_PRIORITY_INVESTIGATION"
-    elif score >= THRESH_AUDIT:
-        return "QUEUE_ROUTINE_AUDIT"
-    return "ACTION_APPROVE"
-
-routing_decisions = [triage_transaction(s) for s in anomaly_scores]
+    results = incoming_txs.copy()
+    results["anomaly_score"] = anomaly_scores
+    results["is_alert"] = (anomaly_scores >= FPR_01PCT_CUTOFF).astype(int)
+    return results
 ```
 
 ---
 
-## Key Takeaways & Design Decisions
+## Getting Started & Reproducibility
 
-1. **Why Unsupervised Density Modeling?**
-   In financial fraud, supervised models are prone to silent degradation as fraud rings adapt. By modeling the boundary of normalcy rather than the boundary of historical fraud, GMMs identify structural outliers regardless of attack mechanism.
-2. **Why Full Covariance?**
-   PCA decorrelates components across the overall dataset, but conditional distributions within sub-populations of legitimate spending retain correlations. Full covariance matrices allow each component to fit elliptical clusters accurately.
-3. **Operational Alignment:**
-   Machine learning in fraud risk cannot be evaluated by raw accuracy or ROC-AUC alone. Calibrating decisions to fixed investigator capacities (Top-K) and strict false positive budgets (FPR $\le 0.1\%$) translates statistical density estimation directly into measurable operational ROI.
+### 1. Clone the Repository & Install Dependencies
+```bash
+git clone [https://github.com/palak22291/card-fraud-triage.git](https://github.com/palak22291/card-fraud-triage.git)
+cd card-fraud-triage
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+### 2. Dataset Preparation & Attribution
+1. Download the [Credit Card Fraud Detection](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud) dataset from Kaggle (collected and analyzed by Worldline and the Machine Learning Group at Universite Libre de Bruxelles [ULB]).
+2. Place `creditcard.csv` inside `data/raw/` and execute the validation and preprocessing scripts:
+```bash
+python src/data_audit.py
+python src/preprocess.py
+```
+
+### 3. Execute Training & Evaluation Notebooks
+```bash
+jupyter notebook
+```
+1. **`notebooks/01_eda_and_quality.ipynb`**: Exploratory analysis of class imbalance, transaction amount skewness, and PCA density separation.
+2. **`notebooks/gmm_model_selection.ipynb`**: Runs the $k=1 \dots 10$ AIC/BIC sweep, trains the $k=10$ (`n_init=5`) GMM, evaluates on `val.csv`, and exports `models/scaler.joblib` and `models/best_gmm.joblib`.
+3. **`notebooks/final_evaluation.ipynb`**: Evaluates saved artifacts on `test.csv`, plots PR and ROC curves, and reproduces all operational triage tables.
+
+---
+
+## Limitations & Future Work
+
+- **Static Benchmark Dataset:** The ULB dataset captures two days of European card transactions from September 2013. Production payment systems experience concept drift and seasonal shifts, requiring sliding-window retraining and online density adaptation.
+- **Comparative Unsupervised Baselines:** Phase-2 extensions will benchmark the full-covariance GMM against Isolation Forests, One-Class SVMs, and Deep Autoencoder reconstruction error models under identical chronological splits.
+- **Skewed Amount Transformation:** While `StandardScaler` standardizes feature variance, `Amount` exhibits heavy right-skewness (`$0` to `$25,691`). Applying a `log1p` transformation or `RobustScaler` to `Amount` prior to density estimation may further sharpen tail separation.
+- **Feature Interpretability:** Because `V1`-`V28` are anonymized PCA projections, component-level attributions cannot be mapped directly to raw merchant categories or cardholder velocity rules without access to upstream pre-PCA attributes.
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
