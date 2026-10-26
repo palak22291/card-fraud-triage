@@ -1,0 +1,353 @@
+\documentclass[11pt, a4paper]{article}
+
+\usepackage[a4paper, margin=2.3cm]{geometry}
+\usepackage{fontspec}
+\usepackage[english, bidi=basic, provide=*]{babel}
+\babelprovide[import, onchar=ids fonts]{english}
+\babelfont{rm}{Noto Sans}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage[table]{xcolor}
+\usepackage{hyperref}
+
+\definecolor{primaryblue}{RGB}{24, 62, 115}
+\definecolor{tableheader}{RGB}{235, 241, 248}
+\definecolor{rowalt}{RGB}{248, 250, 252}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=primaryblue,
+    urlcolor=primaryblue,
+    citecolor=primaryblue,
+    pdftitle={Card Fraud Triage: Unsupervised Density-Based Anomaly Detection},
+    pdfauthor={Palak Gupta}
+}
+
+\setlength{\parskip}{0.55em}
+\setlength{\parindent}{0pt}
+
+\title{
+    \vspace{-1.2cm}
+    {\Large \textbf{\textcolor{primaryblue}{APPLIED MACHINE LEARNING PROJECT REPORT}}}\\[0.4cm]
+    {\LARGE \textbf{Card Fraud Triage: Unsupervised Density-Based Anomaly Detection via Full-Covariance Gaussian Mixture Models}}\\[0.3cm]
+    {\large Addressing Extreme Class Imbalance and Temporal Covariate Shift in Financial Transaction Streams}
+}
+\author{
+    \textbf{Palak Gupta}\\
+    Repository: \url{https://github.com/palak22291/card-fraud-triage}
+}
+\date{October 2026}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\begin{abstract}
+\noindent
+Credit card fraud detection in real-world payment processing systems is characterized by severe class imbalance ($0.173\%$ positive fraud rate, or a $577.9 : 1$ legitimate-to-fraud ratio) and non-stationary adversarial behavior. Supervised classification architectures trained on historical fraud labels frequently overfit to static attack signatures and fail to generalize when confronted with zero-day fraud vectors. This report presents an end-to-end, strictly unsupervised anomaly detection and alert triage pipeline utilizing full-covariance \textbf{Gaussian Mixture Models (GMM)}. By modeling the multimodal probability density of legitimate cardholder behavior across $D = 29$ behavioral features ($\text{V1}$--$\text{V28}$ and $\text{Amount}$) and eliminating temporal recording leakage ($\text{Time}$), incoming transactions are scored via negative log-likelihood $s(\mathbf{x}) = -\log p(\mathbf{x})$. Information-theoretic model selection across $K \in \{1, \dots, 10\}$ identifies an optimal $K = 10$ mixture architecture trained with multi-initialization Expectation-Maximization ($n_{\text{init}} = 5$). Evaluated on a strictly chronological held-out test partition ($56,962$ transactions), the model achieves a \textbf{Test PR-AUC of 0.4736} (\textbf{359.7$\times$ lift} over the $0.0013$ random baseline) and a \textbf{Test ROC-AUC of 0.9106}. Under a strict operational False Positive Rate budget of $\text{FPR} \le 0.10\%$, the system captures \textbf{76.00\% of all fraudulent transactions ($57 / 75$)} at \textbf{50.00\% precision}, while top-$K$ alert queue triage at $K = 100$ achieves \textbf{57.00\% Precision@100} (\textbf{432.9$\times$ lift}).
+\end{abstract}
+
+\vspace{0.3cm}
+\hrule
+\vspace{0.4cm}
+
+\section{Introduction \& Problem Statement}
+
+Modern digital payment networks process thousands of authorization requests per second. Within these high-throughput streams, fraudulent transactions represent a minute fraction of overall volume, yet account for billions of dollars in annual financial losses. Designing an automated fraud triage engine requires resolving three fundamental machine learning challenges:
+
+\begin{enumerate}
+    \item \textbf{Extreme Class Imbalance:} In the European credit card benchmark dataset analyzed in this study ($284,807$ transactions), only $492$ instances ($0.173\%$) are fraudulent. Standard empirical risk minimization and accuracy-driven classifiers degenerate toward trivial majority-class predictions ($99.827\%$ accuracy with $0\%$ fraud recall).
+    \item \textbf{Adversarial Concept Drift \& Unseen Attack Vectors:} Fraudsters continuously adapt transaction patterns to evade static decision boundaries. Because supervised models rely on historical positive labels ($\text{Class} = 1$), they struggle to detect novel fraud modalities that were absent during training.
+    \item \textbf{Operational Triage Constraints:} Payment processors cannot indiscriminately block suspicious transactions without incurring severe customer friction (false declines) and analyst fatigue. Consequently, an effective fraud model must produce well-calibrated continuous risk scores capable of operating under tight False Positive Rate ($\text{FPR} \le 0.1\%$) and fixed daily analyst queue ($\text{Top-}K$) budgets.
+\end{enumerate}
+
+To overcome these limitations, we formulate credit card fraud detection as an \textbf{unsupervised density estimation problem}. Rather than learning a discriminative boundary between legitimate and fraudulent classes, we fit a parametric probability density $p(\mathbf{x})$ exclusively on chronological legitimate transactions ($\text{Class} = 0$). Fraudulent transactions are identified as low-density structural anomalies residing in the tails of the legitimate behavioral manifold.
+
+\section{Dataset Audit \& Anti-Leakage Preprocessing}
+
+\subsection{Dataset Specifications \& Invariant Verification}
+The study utilizes the Universite Libre de Bruxelles (ULB) and Worldline Credit Card Fraud Detection dataset, comprising $284,807$ European cardholder transactions recorded over a 48-hour window in September 2013. To preserve financial confidentiality, $28$ input attributes ($\text{V1}$ through $\text{V28}$) represent orthogonal principal components derived via Principal Component Analysis (PCA). The remaining attributes are $\text{Time}$ (seconds elapsed since the first recorded transaction), $\text{Amount}$ (transaction value), and the binary target $\text{Class} \in \{0, 1\}$.
+
+Prior to partitioning, an automated validation script (\texttt{src/data\_audit.py}) enforces six programmatic data invariants via hard runtime assertions:
+\begin{itemize}
+    \item \textbf{Dimensionality \& Cardinality:} Exact confirmation of $284,807$ rows and $31$ expected columns.
+    \item \textbf{Completeness:} Zero missing ($\text{NaN}$ or null) values across all $8,829,017$ matrix cells.
+    \item \textbf{Duplicate Analysis:} Identification of $1,081$ exact duplicate rows ($0.380\%$ of total volume).
+    \item \textbf{Target Integrity:} Verification that $\text{Class} \in \{0, 1\}$ exclusively, comprising $284,315$ legitimate ($99.827\%$) and $492$ fraudulent ($0.173\%$) records.
+    \item \textbf{Monetary Non-Negativity \& Skewness:} Verification that $\text{Amount} \ge 0.00$ across all rows, exhibiting severe right-skewness (mean $\$88.35$, median $\$22.00$, standard deviation $\$250.12$, maximum $\$25,691.16$).
+    \item \textbf{Temporal Monotonicity:} Verification that $\text{Time}$ is monotonically non-decreasing over $[0.0\text{s}, 172,792.0\text{s}]$ ($\approx 48.00$ hours).
+\end{itemize}
+
+\subsection{Chronological Splitting Discipline}
+A pervasive methodological flaw in academic fraud detection studies is the use of random $k$-fold cross-validation or random stratified train/test splitting. Randomly shuffling time-series transactions allows the model to train on future cardholder behavior to predict past transactions, introducing severe lookahead leakage.
+
+In \texttt{src/preprocess.py}, the dataset is globally ordered by $\text{Time}$ and partitioned sequentially into a strict $60\% / 20\% / 20\%$ chronological split. To enforce strictly unsupervised learning, all $360$ fraudulent records occurring within the initial $60\%$ window are removed prior to model fitting, leaving $170,524$ purely legitimate transactions in \texttt{train\_legit.csv}. Validation (\texttt{val.csv}) and test (\texttt{test.csv}) partitions retain their natural chronological fraud distributions to reflect realistic forward-in-time deployment.
+
+\begin{table}[h!]
+\centering
+\caption{Chronological Dataset Partitioning and Class Distribution Summary}
+\vspace{0.2cm}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{llcccc}
+\toprule
+\rowcolor{tableheader}
+\textbf{Partition} & \textbf{Artifact File} & \textbf{Total Rows} & \textbf{Legitimate ($\mathbf{0}$)} & \textbf{Fraud ($\mathbf{1}$)} & \textbf{Fraud Rate} \\
+\midrule
+Raw Dataset (100\%) & \texttt{creditcard.csv} & $284,807$ & $284,315$ & $492$ & $0.173\%$ \\
+\rowcolor{rowalt}
+Train Raw (0\%--60\%) & \textit{(Pre-filter split)} & $170,884$ & $170,524$ & $360$ \textit{(dropped)} & $0.211\%$ \\
+\textbf{Train Legit (Unsupervised)} & \texttt{train\_legit.csv} & $\mathbf{170,524}$ & $\mathbf{170,524}$ & $\mathbf{0}$ & $\mathbf{0.000\%}$ \\
+\rowcolor{rowalt}
+Validation Split (60\%--80\%) & \texttt{val.csv} & $56,961$ & $56,904$ & $57$ & $0.100\%$ \\
+Test Split (80\%--100\%) & \texttt{test.csv} & $56,962$ & $56,887$ & $75$ & $0.132\%$ \\
+\bottomrule
+\end{tabular}
+\label{tab:splits}
+\end{table}
+
+\subsection{Elimination of Temporal Recording Leakage (\texttt{Time})}
+A critical engineering audit conducted during pipeline development revealed a subtle covariate shift hazard associated with the raw $\text{Time}$ column. Because the dataset is split chronologically:
+\begin{itemize}
+    \item Training transactions span $\text{Time} \in [0\text{s}, \approx 120,396\text{s}]$.
+    \item Validation transactions span $\text{Time} \in [\approx 120,396\text{s}, \approx 148,640\text{s}]$.
+    \item Test transactions span $\text{Time} \in [\approx 148,640\text{s}, 172,792\text{s}]$.
+\end{itemize}
+
+Because these temporal intervals are strictly non-overlapping, retaining $\text{Time}$ as an input feature in a parametric density estimator causes the Gaussian Mixture Model to learn that legitimate transactions only occur within $[0\text{s}, 120,396\text{s}]$. During test inference, every transaction in \texttt{test.csv} exhibits a timestamp several standard deviations outside the training distribution, systematically inflating anomaly scores for legitimate test transactions and degrading precision. Furthermore, raw seconds elapsed since an arbitrary data-collection start point carries no intrinsic behavioral meaning. Consequently, $\text{Time}$ is used strictly to establish chronological ordering and is dropped from all partitions prior to scaling, yielding $D = 29$ behavioral features ($\text{V1}$--$\text{V28}$ and $\text{Amount}$).
+
+Feature standardization ($\mu = 0, \sigma = 1$) via \texttt{StandardScaler} is fitted exclusively on \texttt{train\_legit.csv} and applied via \texttt{scaler.transform()} to the validation and test sets to guarantee zero statistical leakage.
+
+\section{Mathematical Formulation \& Methodology}
+
+\subsection{Multimodal Density Estimation via Gaussian Mixture Models}
+Legitimate credit card usage is inherently multimodal: routine small-value grocery purchases, recurring digital subscriptions, and high-value travel bookings form distinct clusters in feature space. A single unimodal Gaussian distribution cannot capture this complex geometry. We therefore model the standardized legitimate feature vector $\mathbf{x} \in \mathbb{R}^{D}$ ($D = 29$) as a convex combination of $K$ multivariate Gaussian densities:
+
+\begin{equation}
+p(\mathbf{x} \mid \Theta) = \sum_{k=1}^{K} \pi_k \, \mathcal{N}(\mathbf{x} \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k)
+\end{equation}
+
+where $\Theta = \{\pi_k, \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k\}_{k=1}^{K}$ denotes the model parameters, $\pi_k > 0$ are the mixture weights satisfying $\sum_{k=1}^{K} \pi_k = 1$, $\boldsymbol{\mu}_k \in \mathbb{R}^{D}$ is the mean vector of component $k$, and $\boldsymbol{\Sigma}_k \in \mathbb{R}^{D \times D}$ is its symmetric positive-definite full covariance matrix. The multivariate normal density for component $k$ is given by:
+
+\begin{equation}
+\mathcal{N}(\mathbf{x} \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k) = \frac{1}{(2\pi)^{D/2} |\boldsymbol{\Sigma}_k|^{1/2}} \exp \left( -\frac{1}{2} (\mathbf{x} - \boldsymbol{\mu}_k)^{\top} \boldsymbol{\Sigma}_k^{-1} (\mathbf{x} - \boldsymbol{\mu}_k) \right)
+\end{equation}
+
+Although $\text{V1}$--$\text{V28}$ are globally orthogonal across the entire raw dataset due to PCA, conditioning on specific spending regimes and combining them with $\text{Amount}$ induces local cross-feature correlations within individual behavioral clusters. Selecting \texttt{covariance\_type="full"} allows each component $\boldsymbol{\Sigma}_k$ to orient its ellipsoidal density contour along local feature dependencies rather than restricting contours to axis-aligned (\texttt{diag}) or hyperspherical (\texttt{spherical}) shapes.
+
+\subsection{Expectation-Maximization (EM) Parameter Estimation}
+Given $N = 170,524$ independent and identically distributed legitimate training samples $\mathcal{X} = \{\mathbf{x}_1, \dots, \mathbf{x}_N\}$, the log-likelihood objective is:
+
+\begin{equation}
+\mathcal{L}(\Theta; \mathcal{X}) = \sum_{i=1}^{N} \ln \left( \sum_{k=1}^{K} \pi_k \, \mathcal{N}(\mathbf{x}_i \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k) \right)
+\end{equation}
+
+Because the logarithm of the inner summation prevents a closed-form analytical solution, parameters are estimated iteratively via the Expectation-Maximization (EM) algorithm:
+\begin{itemize}
+    \item \textbf{E-Step (Posterior Responsibilities):} For each transaction $\mathbf{x}_i$ and mixture component $k$, compute the posterior probability (responsibility) $\gamma_{ik}$ that component $k$ generated $\mathbf{x}_i$:
+    \begin{equation}
+    \gamma_{ik} = \frac{\pi_k \, \mathcal{N}(\mathbf{x}_i \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k)}{\sum_{j=1}^{K} \pi_j \, \mathcal{N}(\mathbf{x}_i \mid \boldsymbol{\mu}_j, \boldsymbol{\Sigma}_j)}
+    \end{equation}
+    \item \textbf{M-Step (Parameter Updates):} Using the effective component sample size $N_k = \sum_{i=1}^{N} \gamma_{ik}$, update the mixture weights, means, and regularized full covariance matrices:
+    \begin{equation}
+    \pi_k^{\text{new}} = \frac{N_k}{N}, \qquad \boldsymbol{\mu}_k^{\text{new}} = \frac{1}{N_k} \sum_{i=1}^{N} \gamma_{ik} \mathbf{x}_i, \qquad \boldsymbol{\Sigma}_k^{\text{new}} = \frac{1}{N_k} \sum_{i=1}^{N} \gamma_{ik} (\mathbf{x}_i - \boldsymbol{\mu}_k^{\text{new}})(\mathbf{x}_i - \boldsymbol{\mu}_k^{\text{new}})^{\top} + \epsilon \mathbf{I}
+    \end{equation}
+\end{itemize}
+where $\epsilon = 10^{-6}$ (\texttt{reg\_covar}) prevents covariance singularity.
+
+\subsection{Information-Theoretic Model Selection (AIC \& BIC)}
+Increasing the number of mixture components $K$ monotonically increases the training log-likelihood $\mathcal{L}(\Theta; \mathcal{X})$, creating a risk of overfitting to noise in the legitimate training split. In $D = 29$ dimensions, each full-covariance component requires $D = 29$ mean parameters and $\frac{D(D+1)}{2} = \frac{29 \times 30}{2} = 435$ unique covariance parameters, plus $K - 1$ free mixture weights, yielding a total parameter count of:
+
+\begin{equation}
+P(K) = K \left( D + \frac{D(D+1)}{2} \right) + (K - 1) = 465K - 1
+\end{equation}
+
+At $K = 10$, the model estimates $P(10) = 4,649$ free parameters across $N = 170,524$ observations ($\approx 36.7$ training samples per parameter). We evaluate model complexity across $K \in \{1, \dots, 10\}$ using the Akaike Information Criterion (AIC) and Bayesian Information Criterion (BIC):
+
+\begin{equation}
+\text{AIC}(K) = 2P(K) - 2\mathcal{L}(\hat{\Theta}_K; \mathcal{X}), \qquad \text{BIC}(K) = P(K)\ln(N) - 2\mathcal{L}(\hat{\Theta}_K; \mathcal{X})
+\end{equation}
+
+\subsection{Anomaly Scoring Function}
+At inference time, an unseen transaction $\mathbf{x}_{\text{test}} \in \mathbb{R}^{29}$ is mapped to a continuous anomaly score $s(\mathbf{x}_{\text{test}})$ defined as its negative log-likelihood under the fitted legitimate model:
+
+\begin{equation}
+s(\mathbf{x}_{\text{test}}) = -\ln p(\mathbf{x}_{\text{test}} \mid \hat{\Theta}) = -\ln \left( \sum_{k=1}^{K} \hat{\pi}_k \, \mathcal{N}(\mathbf{x}_{\text{test}} \mid \hat{\boldsymbol{\mu}}_k, \hat{\boldsymbol{\Sigma}}_k) \right)
+\end{equation}
+
+Computed numerically via the log-sum-exp trick (\texttt{score\_samples()}), transactions situated deep within high-density legitimate clusters yield low anomaly scores, whereas fraudulent outliers in sparse regions yield large positive anomaly scores $s(\mathbf{x}_{\text{test}}) \ge \tau$.
+
+\section{Experimental Setup \& Model Selection Results}
+
+Table~\ref{tab:aic_bic} presents the exact numerical results of the $K \in \{1, \dots, 10\}$ AIC and BIC component sweep executed on the $170,524 \times 29$ scaled legitimate training matrix.
+
+\begin{table}[h!]
+\centering
+\caption{Information Criterion Sweep Across GMM Component Counts ($K = 1 \dots 10$, $D = 29$ Features)}
+\vspace{0.2cm}
+\renewcommand{\arraystretch}{1.22}
+\begin{tabular}{ccccl}
+\toprule
+\rowcolor{tableheader}
+\textbf{Components ($K$)} & \textbf{Parameters ($P$)} & \textbf{AIC Score} & \textbf{BIC Score} & \textbf{$\Delta$ BIC (vs. $K-1$)} \\
+\midrule
+$1$ & $464$ & $13,356,086.41$ & $13,360,748.05$ & --- \textit{(Unimodal Baseline)} \\
+\rowcolor{rowalt}
+$2$ & $929$ & $12,180,506.25$ & $12,189,839.57$ & $-1,170,908.48$ \\
+$3$ & $1,394$ & $9,941,768.82$ & $9,955,773.83$ & $-2,234,065.74$ \\
+\rowcolor{rowalt}
+$4$ & $1,859$ & $1,599,082.15$ & $1,617,758.83$ & $-8,338,015.00$ \textit{(Max Drop)} \\
+$5$ & $2,324$ & $-5,050,350.59$ & $-5,027,002.22$ & $-6,644,761.05$ \\
+\rowcolor{rowalt}
+$6$ & $2,789$ & $-1,983,424.04$ & $-1,955,403.98$ & $+3,071,598.24$ \textit{(EM Local Optimum)} \\
+$7$ & $3,254$ & $-7,275,442.54$ & $-7,242,750.80$ & $-5,287,346.82$ \\
+\rowcolor{rowalt}
+$8$ & $3,719$ & $-8,635,744.41$ & $-8,598,380.99$ & $-1,355,630.19$ \\
+$9$ & $4,184$ & $-8,799,732.95$ & $-8,757,697.85$ & $-159,316.86$ \\
+\rowcolor{rowalt}
+$\mathbf{10}$ & $\mathbf{4,649}$ & $\mathbf{-9,820,186.41}$ & $\mathbf{-9,773,479.62}$ & $\mathbf{-1,015,781.77}$ \textbf{(Global Minimum)} \\
+\bottomrule
+\end{tabular}
+\label{tab:aic_bic}
+\end{table}
+
+\textbf{Key Empirical Observations from the AIC/BIC Sweep:}
+\begin{enumerate}
+    \item \textbf{Failure of Unimodal Density ($K=1$):} A single Gaussian ($K=1$) yields an exceedingly poor fit ($\text{BIC} = 13.36 \times 10^6$). Expanding from $K=1$ to $K=5$ reduces BIC by over $18.38 \times 10^6$ points, confirming that legitimate cardholder behavior spans multiple distinct clusters.
+    \item \textbf{Non-Convex EM Sensitivity ($K=6$ Spike):} During the single-initialization sweep ($n_{\text{init}} = 1$), $K=6$ converged to a suboptimal local maximum ($\text{BIC} = -1.96 \times 10^6$). This empirical artifact demonstrates the non-convexity of high-dimensional full-covariance log-likelihood surfaces and directly motivated setting $n_{\text{init}} = 5$ for the final production estimator.
+    \item \textbf{Selection of $K=10$:} Both AIC and BIC achieve their global mathematical minimum at $K = 10$ ($\text{BIC} = -9,773,479.62$). The final estimator (\texttt{models/best\_gmm.joblib}) is therefore trained with $K = 10$, \texttt{covariance\_type="full"}, $n_{\text{init}} = 5$, and \texttt{random\_state=42}.
+\end{enumerate}
+
+Across the legitimate training set, log-likelihood scores range down to a minimum of $-2,426.40$, with the \textbf{1st-percentile training log-likelihood threshold} calibrated at $\tau_{1\%} = -51.9057$ (corresponding to an anomaly score cutoff of $s(\mathbf{x}) > 51.9057$).
+
+\section{Held-Out Test Set Evaluation \& Operational Triage}
+
+The serialized scaler and $K=10$ GMM were evaluated on the held-out chronological test partition (\texttt{test.csv}: $56,962$ total transactions, comprising $56,887$ legitimate and $75$ fraudulent instances; positive prevalence $0.132\%$).
+
+\subsection{Global Ranking Performance (ROC-AUC vs. PR-AUC)}
+While Area Under the Receiver Operating Characteristic Curve (ROC-AUC) evaluates global ranking across all thresholds, its False Positive Rate denominator ($\text{FPR} = \frac{\text{FP}}{\text{FP} + \text{TN}}$) is dominated by the massive True Negative count ($\text{TN} \approx 56,887$). Consequently, ROC-AUC can remain artificially high even when false alarms outnumber true frauds by $10:1$. We therefore prioritize \textbf{Area Under the Precision-Recall Curve (PR-AUC)}, which directly penalizes false positives relative to true fraud detections.
+
+\begin{table}[h!]
+\centering
+\caption{Global Ranking Metrics on Held-Out Chronological Test Set ($N_{\text{test}} = 56,962$)}
+\vspace{0.2cm}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{lcl}
+\toprule
+\rowcolor{tableheader}
+\textbf{Evaluation Metric} & \textbf{Test Score} & \textbf{Benchmark / Operational Interpretation} \\
+\midrule
+Random Baseline PR-AUC & $0.0013$ & Equal to test fraud prevalence ($75 / 56,962 = 0.132\%$) \\
+\rowcolor{rowalt}
+\textbf{GMM Test PR-AUC} & $\mathbf{0.4736}$ & \textbf{359.7$\times$ lift over random guessing} (purely unsupervised) \\
+\textbf{GMM Test ROC-AUC} & $\mathbf{0.9106}$ & Strong global ranking separation vs. $0.5000$ random baseline \\
+\rowcolor{rowalt}
+1st-Pct Train LL Cutoff & $-51.9057$ & Unsupervised log-likelihood threshold derived on \texttt{train\_legit.csv} \\
+\bottomrule
+\end{tabular}
+\label{tab:global_metrics}
+\end{table}
+
+Removing the leaked $\text{Time}$ attribute and optimizing the 29-feature density model at $K=10$ ($n_{\text{init}}=5$) elevated Test PR-AUC from an initial $0.3622$ to \textbf{0.4736} and Test ROC-AUC from $0.9065$ to \textbf{0.9106}.
+
+\subsection{Performance at Fixed False Positive Rate (FPR) Budgets}
+In automated card authorization pipelines, risk teams enforce strict upper bounds on the False Positive Rate to prevent legitimate cardholders from experiencing wrongful card declines. Table~\ref{tab:fpr_budgets} evaluates the GMM across three industry-standard FPR operating points ($\le 0.1\%$, $\le 0.5\%$, and $\le 1.0\%$).
+
+\begin{table}[h!]
+\centering
+\caption{Fraud Detection Performance Under Fixed False Positive Rate (FPR) Budgets}
+\vspace{0.2cm}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{ccccccc}
+\toprule
+\rowcolor{tableheader}
+\textbf{FPR Budget} & \textbf{Actual FPR} & \textbf{Score Cutoff} & \textbf{Frauds Caught (TP)} & \textbf{False Alarms (FP)} & \textbf{Recall} & \textbf{Precision} \\
+\midrule
+$\mathbf{\le 0.1\%}$ & $0.10\%$ & $89.89$ & $57 / 75$ & $57$ & $\mathbf{76.00\%}$ & $\mathbf{50.00\%}$ \\
+\rowcolor{rowalt}
+$\mathbf{\le 0.5\%}$ & $0.50\%$ & $63.52$ & $59 / 75$ & $285$ & $\mathbf{78.67\%}$ & $17.15\%$ \\
+$\mathbf{\le 1.0\%}$ & $1.00\%$ & $55.55$ & $59 / 75$ & $569$ & $\mathbf{78.67\%}$ & $9.39\%$ \\
+\bottomrule
+\end{tabular}
+\label{tab:fpr_budgets}
+\end{table}
+
+At the strictest operating budget of $\text{FPR} \le 0.10\%$ ($s(\mathbf{x}) \ge 89.89$), the system successfully intercepts \textbf{57 of the 75 total frauds (76.00\% recall)} while generating only \textbf{57 false alarms} out of $56,887$ legitimate transactions—meaning exactly \textbf{1 in every 2 flagged alerts (50.00\% precision)} is a confirmed fraud.
+
+\subsection{Capacity-Constrained Analyst Alert Triage ($\text{Precision@}K$ \& $\text{Recall@}K$)}
+When transactions are routed to human fraud investigators for manual review, operational capacity is bounded by a fixed daily queue size $K$. We rank all $56,962$ test transactions in descending order of anomaly score $s(\mathbf{x})$ and evaluate the top $K \in \{50, 100, 200, 500\}$ alerts in Table~\ref{tab:topk}.
+
+\begin{table}[h!]
+\centering
+\caption{Analyst Alert Queue Triage Efficiency ($\text{Precision@}K$ and $\text{Recall@}K$)}
+\vspace{0.2cm}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{ccccc}
+\toprule
+\rowcolor{tableheader}
+\textbf{Alert Queue Capacity ($K$)} & \textbf{True Frauds Caught (TP)} & \textbf{Precision@$K$} & \textbf{Recall@$K$} & \textbf{Lift vs. Random ($0.132\%$)} \\
+\midrule
+$\text{Top-}50$ & $29 / 75$ & $\mathbf{58.00\%}$ & $38.67\%$ & $\mathbf{440.5\times}$ \\
+\rowcolor{rowalt}
+$\mathbf{\text{Top-}100}$ & $\mathbf{57 / 75}$ & $\mathbf{57.00\%}$ & $\mathbf{76.00\%}$ & $\mathbf{432.9\times}$ \\
+$\text{Top-}200$ & $58 / 75$ & $29.00\%$ & $77.33\%$ & $220.3\times$ \\
+\rowcolor{rowalt}
+$\text{Top-}500$ & $59 / 75$ & $11.80\%$ & $78.67\%$ & $89.6\times$ \\
+\bottomrule
+\end{tabular}
+\label{tab:topk}
+\end{table}
+
+Reviewing just the \textbf{Top-100 highest-scoring transactions} ($0.176\%$ of test volume) enables a fraud operations team to capture \textbf{76.00\% of all fraudulent transactions ($57 / 75$)} at \textbf{57.00\% precision}, representing a \textbf{432.9$\times$ concentration lift} over random audit sampling.
+
+\subsection{Evaluation at the Unsupervised 1st-Percentile Training Threshold}
+Applying the uncalibrated 1st-percentile training log-likelihood threshold ($\text{LL} < -51.9057$) directly to the test set yields the confusion matrix and classification metrics summarized in Table~\ref{tab:cm}.
+
+\begin{table}[h!]
+\centering
+\caption{Test Set Confusion Matrix at 1st-Percentile Training Threshold ($\text{LL} < -51.9057$)}
+\vspace{0.2cm}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{lcccl}
+\toprule
+\rowcolor{tableheader}
+\textbf{Quadrant / Metric} & \textbf{Count / Value} & \textbf{Class} & \textbf{Rate} & \textbf{Operational Meaning} \\
+\midrule
+True Negatives (TN) & $56,054$ & Legit ($0$) & $98.54\%$ & Legitimate transactions cleared without friction \\
+\rowcolor{rowalt}
+False Positives (FP) & $833$ & Legit ($0$) & $1.46\%$ & Legitimate transactions flagged for secondary review \\
+False Negatives (FN) & $16$ & Fraud ($1$) & $21.33\%$ & In-distribution frauds mimicking normal behavior \\
+\rowcolor{rowalt}
+\textbf{True Positives (TP)} & $\mathbf{59 / 75}$ & \textbf{Fraud ($\mathbf{1}$)} & $\mathbf{78.67\%}$ & \textbf{Fraudulent transactions successfully intercepted} \\
+\midrule
+Overall Accuracy & $98.51\%$ & Combined & --- & Macro F1: $0.5573$ $\mid$ Weighted F1: $0.9913$ \\
+\bottomrule
+\end{tabular}
+\label{tab:cm}
+\end{table}
+
+Notice that across both the $\text{FPR} \le 0.5\%$ budget and the $\text{Top-}500$ queue, recall plateaus at $78.67\%$ ($59 / 75$ frauds). This indicates that $59$ of the $75$ test frauds exhibit pronounced geometric separation in PCA space, whereas the remaining $16$ fraudulent transactions ($21.33\%$) closely mimic routine legitimate spending distributions and require cardholder-level velocity features or supervised ensemble layers for detection.
+
+\section{Limitations, Engineering Trade-offs \& Future Work}
+
+To ensure scientific transparency, several architectural boundaries and avenues for Phase-2 extension are documented below:
+
+\begin{enumerate}
+    \item \textbf{Non-Stationary Concept Drift \& Sliding-Window Retraining:} The ULB dataset captures a static 48-hour window. In live payment ecosystems, cardholder spending shifts seasonally (e.g., holiday retail surges). Production deployment requires periodic sliding-window refitting of the GMM parameters $\Theta$ and dynamic recalibration of quantile score thresholds.
+    \item \textbf{Heavy Right-Skewness of Transaction \texttt{Amount}:} While \texttt{StandardScaler} normalizes variance, $\text{Amount}$ spans $\$0.00$ to $\$25,691.16$ with extreme positive skewness. Applying a logarithmic transformation $\tilde{x}_{\text{Amount}} = \ln(1 + \text{Amount})$ or a quantile-based \texttt{RobustScaler} prior to fitting the Gaussian mixture could further improve covariance conditioning in the high-value tail.
+    \item \textbf{Comparative Unsupervised Benchmarking:} While full-covariance GMM ($K=10$) achieves strong density separation ($\text{PR-AUC} = 0.4736$), future work will benchmark this parametric density approach against non-parametric Isolation Forests, One-Class Support Vector Machines (OC-SVM), and Deep Reconstruction Autoencoders under identical chronological splits.
+    \item \textbf{PCA Interpretability Constraints:} Because $\text{V1}$--$\text{V28}$ are anonymized principal components, high anomaly scores cannot be directly translated into human-readable rule explanations (e.g., merchant category mismatch or cross-border velocity). In production, component-level Mahalanobis distance decomposition $(\mathbf{x} - \boldsymbol{\mu}_k)^{\top}\boldsymbol{\Sigma}_k^{-1}(\mathbf{x} - \boldsymbol{\mu}_k)$ can be paired with raw pre-PCA transaction attributes to provide interpretable analyst alert reason codes.
+\end{enumerate}
+
+\section{Conclusion}
+
+This project demonstrates that a rigorously engineered, leak-free unsupervised \textbf{Gaussian Mixture Model ($K=10$, full covariance, $n_{\text{init}}=5$)} can effectively isolate ...
+a \textbf{Test PR-AUC of 0.4736 (359.7$\times$ lift)}, a \textbf{Test ROC-AUC of 0.9106}, and captures \textbf{76.00\% of all test frauds at 50.00\% precision} ...
+
+\vspace{0.5cm}
+\noindent\textbf{Dataset Attribution:} The Credit Card Fraud Detection dataset used in this study was collected and made available by Worldline and the Machine Learning Group at Universit\'{e} Libre de Bruxelles (ULB). Available at: \url{https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud}.
+\end{document}

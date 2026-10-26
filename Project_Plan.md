@@ -15,7 +15,7 @@ Frame card fraud as anomaly detection by fitting a Gaussian Mixture Model (GMM) 
 
 ## Milestone 3: GMM Training & Threshold Tuning
 * Scale features using `StandardScaler`.
-* Evaluate AIC and BIC scores to tune the Gaussian component count (Optimal k=7).
+* Evaluate AIC and BIC scores to tune the Gaussian component count (Optimal k=10).
 * Train the final GMM solely on legitimate transactions.
 * Calculate log-likelihood scores and establish an anomaly threshold based on validation data.
 
