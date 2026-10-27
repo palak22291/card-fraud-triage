@@ -27,8 +27,8 @@ This project implements a strictly **unsupervised density estimation and alert t
 | :--- | :---: | :--- |
 | **Test PR-AUC** | **0.4736** | **359.7x lift** over random baseline (`0.0013`) |
 | **Test ROC-AUC** | **0.9106** | Strong global ranking separation (`0.5000` baseline) |
-| **Recall @ FPR <= 0.1%** | **76.00%** | 57/75 frauds caught at **61.96% precision** (only 35 false alarms) |
-| **Recall @ FPR <= 0.5%** | **78.67%** | 59/75 frauds caught (285 false alarms across 56,887 legit txs) |
+| **Recall @ Val FPR <= 0.1%** | **76.00%** | 57/75 frauds caught at **61.96% precision** (only 35 false alarms, 92 total alerts) |
+| **Recall @ Val FPR <= 0.5%** | **78.67%** | 59/75 frauds caught (192 false alarms across 56,887 legit txs) |
 | **Top-100 Alert Queue** | **57 / 75 Caught** | **57.00% Precision@100** & **76.00% Recall@100** (**432.9x lift**) |
 
 ---
@@ -51,7 +51,7 @@ flowchart TD
     H --> F
     J --> E
     J --> F
-    E --> K["Validation Threshold Calibration (1st-Pct LL = -51.9057)"]
+    E --> K["Validation Threshold Calibration (tau = 114.62 @ Val FPR <= 0.10%)"]
     F --> L["Held-Out Test Triage Evaluation (PR-AUC = 0.4736, ROC-AUC = 0.9106)"]
 ```
 
@@ -74,7 +74,7 @@ card-fraud-triage/
 │   ├── scaler.joblib                    # Fitted StandardScaler (29 features)
 │   └── best_gmm.joblib                  # Fitted GaussianMixture (k=10, full covariance)
 ├── notebooks/
-│   ├── 01_eda_and_quality.ipynb         # Class imbalance, amount skewness, PCA separation
+│   ├── eda_and_quality.ipynb           # Class imbalance, amount skewness, PCA separation
 │   ├── gmm_model_selection.ipynb        # AIC/BIC sweep, training, validation calibration
 │   └── final_evaluation.ipynb           # Held-out test PR/ROC curves & triage tables
 ├── src/
@@ -107,7 +107,7 @@ Randomly shuffling time-series financial transactions introduces lookahead leaka
 | **Test (20%)** | `test.csv` | **56,962** | 56,887 | 75 | 0.132% | 29 (`V1`-`V28`, `Amount`) |
 
 ### 2. Elimination of Temporal Recording Leakage (`Time`)
-In the raw dataset, `Time` measures seconds elapsed since the first recorded transaction (`0s` to `172,792s`). Under a chronological split, `Time` spans non-overlapping intervals across Train (`0s`-`~103,000s`), Validation, and Test (`~138,000s`-`172,792s`). Retaining `Time` in a density estimator causes severe covariate shift: the GMM assigns artificially low likelihoods to test transactions simply because their timestamps fall outside the training window. Dropping `Time` after sorting isolates true behavioral anomalies across the 29 remaining features (`V1`-`V28` and `Amount`).
+In the raw dataset, `Time` measures seconds elapsed since the first recorded transaction (`0s` to `172,792s`). Under a chronological split, `Time` spans non-overlapping intervals across Train (`0s`-`120,396s`), Validation (`120,396s`-`145,247s`), and Test (`145,248s`-`172,792s`). Retaining `Time` in a density estimator causes severe covariate shift: the GMM assigns artificially low likelihoods to test transactions simply because their timestamps fall outside the training window. Dropping `Time` after sorting isolates true behavioral anomalies across the 29 remaining features (`V1`-`V28` and `Amount`).
 
 ---
 
@@ -144,14 +144,14 @@ The final estimator is trained at **`k = 10`** with **`covariance_type="full"`**
 
 Evaluated on `data/processed/test.csv` (`56,962` transactions: `75` fraudulent, `56,887` legitimate):
 
-### 1. Performance at Fixed False Positive Rate (FPR) Budgets
-In production payment processing, fraud rules are constrained by maximum allowable customer friction (False Positive Rate):
+### 1. Performance at Validation-Calibrated FPR Operating Points
+In production payment processing, fraud rules are constrained by maximum allowable customer friction (False Positive Rate). All operating thresholds are calibrated strictly on validation legitimate data and applied once to the held-out test partition:
 
-| FPR Budget | Actual Test FPR | Anomaly Score Cutoff | Fraud Caught (`TP`) | False Alarms (`FP`) | Recall | Precision |
-| :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **`<= 0.1%`** | `0.062%` | `114.62` | `57 / 75` | `35` | **76.00%** | **61.96%** |
-| **`<= 0.5%`** | `0.338%` | `68.72` | `59 / 75` | `192` | **78.67%** | **23.51%** |
-| **`<= 1.0%`** | `0.608%` | `60.69` | `59 / 75` | `346` | **78.67%** | **14.57%** |
+| Val FPR Budget | Val Cutoff ($\tau$) | Frauds Caught (`TP`) | Total Alerts | False Alarms (`FP`) | Actual Test FPR | Test Recall | Test Precision |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`<= 0.10%`** | `114.62` | **`57 / 75`** | `92` | `35` | `0.062%` | **76.00%** | **61.96%** |
+| **`<= 0.50%`** | `68.72` | `59 / 75` | `251` | `192` | `0.338%` | **78.67%** | `23.51%` |
+| **`<= 1.00%`** | `60.69` | `59 / 75` | `405` | `346` | `0.608%` | **78.67%** | `14.57%` |
 
 ### 2. Analyst Alert Queue Triage (`Precision@K` & `Recall@K`)
 When fraud operations teams review a fixed daily capacity of the top $K$ highest-scoring alerts:
@@ -163,16 +163,27 @@ When fraud operations teams review a fixed daily capacity of the top $K$ highest
 | **Top-200** | `58 / 75` | `29.00%` | **77.33%** | **220.3x** |
 | **Top-500** | `59 / 75` | `11.80%` | **78.67%** | **89.6x** |
 
-### 3. Evaluation at the 1st-Percentile Training Threshold (`LL < -51.9057`)
-Applying the unsupervised 1st-percentile training log-likelihood cutoff directly to the test set:
+### 3. Test Confusion Matrix at Validation Cutoff (`tau = 114.62`, Val FPR <= 0.10%)
+Evaluating the production threshold on all 56,962 held-out test transactions:
 
 | Metric / Quadrant | Count / Score | Operational Meaning |
 | :--- | :---: | :--- |
-| **True Negatives (`TN`)** | `56,054` | Legitimate transactions cleared (`98.54%` specificity) |
-| **False Positives (`FP`)** | `833` | Legitimate transactions flagged (`1.46%` test FPR) |
-| **False Negatives (`FN`)** | `16` | Fraudulent transactions missed (`21.33%` miss rate) |
-| **True Positives (`TP`)** | `59 / 75` | **Fraudulent transactions caught (`78.67%` recall)** |
-| **Fraud Precision / Recall / F1** | `0.0661` / `0.7867` / `0.1220` | Uncalibrated 1st-percentile operating point |
+| **True Negatives (`TN`)** | `56,852` | Legitimate transactions cleared (`99.94%` specificity) |
+| **False Positives (`FP`)** | `35` | Legitimate transactions flagged as false alarms (`0.062%` test FPR) |
+| **False Negatives (`FN`)** | `18` | Fraudulent transactions missed (`24.00%` miss rate) |
+| **True Positives (`TP`)** | **`57 / 75`** | **Fraudulent transactions intercepted (`76.00%` recall)** |
+| **Fraud Precision / Recall / F1** | `0.6196` / `0.7600` / `0.6826` | 92 total alerts, 61.96% precision, F1 = 0.6826 |
+| **Overall Accuracy** | `99.91%` | Combined classification accuracy |
+
+### 4. Baseline Benchmarking (at Validation-Derived FPR <= 0.1% Thresholds)
+Comparative evaluation against unsupervised baselines and a supervised ceiling on identical chronological splits:
+
+| Model | Paradigm | Test PR-AUC | Test ROC-AUC | Recall @ Val FPR<=0.1% | Precision @ Val FPR<=0.1% |
+| :--- | :--- | :---: | :---: | :---: | :---: |
+| **Isolation Forest ($n=200$)** | Unsupervised Tree | `0.0358` | `0.9470` | `0.0%` (0/75) | `0.0%` (0 TP, 42 FP) |
+| **Single Gaussian ($K=1$)** | Unsupervised Mahalanobis | `0.1443` | `0.9594` | `0.0%` (0/75) | `0.0%` (0 TP, 37 FP) |
+| **Full-Covariance GMM ($K=10$)** | **Unsupervised Mixture (Ours)** | **`0.4736`** | **`0.9106`** | **`76.0%` (57/75)** | **`62.0%` (57 TP, 35 FP)** |
+| **Logistic Regression (Balanced)** | Supervised Reference | `0.7438` | `0.9821` | `80.0%` (60/75) | `49.6%` (60 TP, 61 FP) |
 
 ---
 
@@ -187,7 +198,7 @@ scaler = joblib.load("models/scaler.joblib")
 gmm = joblib.load("models/best_gmm.joblib")
 
 FEATURE_COLS = [f"V{i}" for i in range(1, 29)] + ["Amount"]
-FPR_01PCT_CUTOFF = 89.89  # Calibrated for <= 0.10% False Positive Rate (50% Precision, 76% Recall)
+FPR_01PCT_CUTOFF = 114.62  # Validation-calibrated cutoff for <= 0.10% FPR (61.96% Precision, 76.00% Recall)
 
 
 def score_transactions(incoming_txs: pd.DataFrame) -> pd.DataFrame:
@@ -207,7 +218,7 @@ def score_transactions(incoming_txs: pd.DataFrame) -> pd.DataFrame:
 
 ### 1. Clone the Repository & Install Dependencies
 ```bash
-git clone [https://github.com/palak22291/card-fraud-triage.git](https://github.com/palak22291/card-fraud-triage.git)
+git clone https://github.com/palak22291/card-fraud-triage.git
 cd card-fraud-triage
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
@@ -226,7 +237,7 @@ python src/preprocess.py
 ```bash
 jupyter notebook
 ```
-1. **`notebooks/01_eda_and_quality.ipynb`**: Exploratory analysis of class imbalance, transaction amount skewness, and PCA density separation.
+1. **`notebooks/eda_and_quality.ipynb`**: Exploratory analysis of class imbalance, transaction amount skewness, and PCA density separation.
 2. **`notebooks/gmm_model_selection.ipynb`**: Runs the $k=1 \dots 10$ AIC/BIC sweep, trains the $k=10$ (`n_init=5`) GMM, evaluates on `val.csv`, and exports `models/scaler.joblib` and `models/best_gmm.joblib`.
 3. **`notebooks/final_evaluation.ipynb`**: Evaluates saved artifacts on `test.csv`, plots PR and ROC curves, and reproduces all operational triage tables.
 
