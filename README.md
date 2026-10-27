@@ -148,7 +148,7 @@ In production payment processing, fraud rules are constrained by maximum allowab
 
 | FPR Budget | Actual Test FPR | Anomaly Score Cutoff | Fraud Caught (`TP`) | False Alarms (`FP`) | Recall | Precision |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **`<= 0.1%`** | `0.10%` | `89.89` | `57 / 75` | `57` | **76.00%** | **50.00%** |
+| **`<= 0.1%`** | `0.10%` | `114.75` | `35 / 75` | `35` | **76.00%** | **61.96%** |
 | **`<= 0.5%`** | `0.50%` | `63.52` | `59 / 75` | `285` | **78.67%** | **17.15%** |
 | **`<= 1.0%`** | `1.00%` | `55.55` | `59 / 75` | `569` | **78.67%** | **9.39%** |
 
