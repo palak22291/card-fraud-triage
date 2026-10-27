@@ -1,0 +1,503 @@
+\documentclass[11pt, a4paper]{article}
+
+\usepackage[a4paper, margin=2.3cm]{geometry}
+\usepackage{fontspec}
+\IfFontExistsTF{Noto Sans}{\setmainfont{Noto Sans}}{\IfFontExistsTF{Liberation Sans}{\setmainfont{Liberation Sans}}{\IfFontExistsTF{DejaVu Sans}{\setmainfont{DejaVu Sans}}{}}}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage[table]{xcolor}
+\usepackage{hyperref}
+
+\definecolor{primaryblue}{RGB}{24, 62, 115}
+\definecolor{tableheader}{RGB}{235, 241, 248}
+\definecolor{rowalt}{RGB}{248, 250, 252}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=primaryblue,
+    urlcolor=primaryblue,
+    citecolor=primaryblue,
+    pdftitle={Card Fraud Triage: Unsupervised Density-Based Anomaly Detection},
+    pdfauthor={Palak Gupta}
+}
+
+\setlength{\parskip}{0.55em}
+\setlength{\emergencystretch}{3em}
+\setlength{\parindent}{0pt}
+
+\title{
+    \vspace{-1.2cm}
+    {\Large \textbf{\textcolor{primaryblue}{APPLIED MACHINE LEARNING PROJECT REPORT}}}\\[0.4cm]
+    {\LARGE \textbf{Card Fraud Triage: Unsupervised Density-Based Anomaly Detection via Full-Covariance Gaussian Mixture Models}}\\[0.3cm]
+    {\large Extreme Class Imbalance, Temporal Covariate Shift, and Validation-Calibrated Operating Points}
+}
+\author{
+    \textbf{Palak Gupta}\\
+    Repository: \url{https://github.com/palak22291/card-fraud-triage}
+}
+\date{October 2026 \,(Phase 1 Technical Report)}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\begin{abstract}
+\noindent
+Credit card fraud detection is characterized by severe class imbalance ($0.173\%$ positive rate, a $577.9 : 1$ legitimate-to-fraud ratio) and non-stationary adversarial behavior. This report presents an end-to-end, strictly unsupervised anomaly detection and alert-triage pipeline based on full-covariance \textbf{Gaussian Mixture Models (GMM)}. The model fits the multimodal density of legitimate cardholder behavior over $D = 29$ features ($\text{V1}$--$\text{V28}$ and $\text{Amount}$), with the non-stationary $\text{Time}$ column removed, and scores transactions by negative log-likelihood $s(\mathbf{x}) = -\ln p(\mathbf{x})$. A $K = 10$ mixture trained with $n_{\text{init}} = 5$ is evaluated on a strictly chronological held-out test partition ($56{,}962$ transactions) and reaches \textbf{Test PR-AUC $0.4736$} ($359.7\times$ over the $0.0013$ random baseline; bootstrap 95\% CI $[0.370,\, 0.624]$) and \textbf{Test ROC-AUC $0.9106$}. With the operating threshold $\tau = 114.62$ calibrated \emph{exclusively on the validation set} (target $\text{FPR} \le 0.10\%$), the system captures \textbf{76.00\% of test frauds ($57/75$) at 61.96\% precision} ($92$ alerts, $35$ false alarms); a fixed Top-$100$ analyst queue yields $57.00\%$ precision ($432.9\times$ lift). A controlled ablation shows that retaining $\text{Time}$ lowers PR-AUC to $0.2696$. Against baselines on identical splits, Isolation Forest ($0.0358$) and a single Gaussian ($0.1443$) are far weaker, while a supervised logistic regression reaches $0.7438$, quantifying the cost of using no fraud labels. We also document open model-risk items: near-singular component covariances, sensitivity to EM initialization, and a sweep boundary at $K = 10$.
+\end{abstract}
+
+\vspace{0.3cm}
+\hrule
+\vspace{0.4cm}
+
+\section{Introduction \& Problem Statement}
+
+Modern payment networks process thousands of authorization requests per second. Fraudulent transactions are a minute fraction of volume yet account for large annual losses. Designing an automated triage engine requires addressing three challenges:
+
+\begin{enumerate}
+    \item \textbf{Extreme Class Imbalance:} In the European credit card benchmark analyzed here ($284{,}807$ transactions), only $492$ ($0.173\%$) are fraudulent. A model predicting ``legitimate'' for every transaction scores $99.827\%$ accuracy with $0\%$ fraud recall, so accuracy is not a useful metric.
+    \item \textbf{Concept Drift \& Unseen Attack Vectors:} Fraud patterns evolve. Supervised models learn from historical positive labels and may generalize poorly to novel fraud modalities absent from training. This motivates a label-free alternative; Section~\ref{sec:baselines} tests how much accuracy is given up by not using labels on this (static, two-day) benchmark.
+    \item \textbf{Operational Triage Constraints:} Processors cannot block transactions indiscriminately without customer friction and analyst fatigue. A usable model must therefore produce continuous risk scores that can operate under a tight False Positive Rate budget ($\text{FPR} \le 0.1\%$) or a fixed analyst-queue size ($\text{Top-}K$).
+\end{enumerate}
+
+We formulate detection as \textbf{unsupervised density estimation}: a parametric density $p(\mathbf{x})$ is fitted only on chronologically earlier legitimate transactions ($\text{Class} = 0$), and fraud is identified as low-density outliers in its tails. Fraud labels are used only for evaluation and for choosing operating thresholds on the validation split.
+
+\section{Dataset Audit \& Preprocessing}
+
+\subsection{Dataset Specifications \& Invariant Verification}
+The study uses the Universit\'e Libre de Bruxelles (ULB) / Worldline Credit Card Fraud Detection dataset: $284{,}807$ European cardholder transactions recorded over a 48-hour window in September 2013. To preserve confidentiality, $28$ attributes ($\text{V1}$--$\text{V28}$) are principal components obtained via PCA. The remaining attributes are $\text{Time}$ (seconds since the first transaction), $\text{Amount}$, and the binary target $\text{Class}$.
+
+Before partitioning, \texttt{src/data\_audit.py} enforces six data invariants through runtime assertions:
+\begin{itemize}
+    \item \textbf{Dimensionality \& Cardinality:} exactly $284{,}807$ rows and $31$ columns.
+    \item \textbf{Completeness:} zero missing values across all $8{,}829{,}017$ cells.
+    \item \textbf{Duplicates:} $1{,}081$ exact duplicate rows ($0.380\%$ of volume) are identified.
+    \item \textbf{Target Integrity:} $\text{Class} \in \{0,1\}$ only: $284{,}315$ legitimate ($99.827\%$) and $492$ fraudulent ($0.173\%$).
+    \item \textbf{Monetary Non-Negativity \& Skewness:} $\text{Amount} \ge 0$, severely right-skewed (mean \$88.35, median \$22.00, std.\ \$250.12, maximum \$25,691.16).
+    \item \textbf{Temporal Monotonicity:} $\text{Time}$ is non-decreasing over $[0, 172{,}792]$ s ($\approx 48$ hours).
+\end{itemize}
+
+\subsection{Chronological Splitting Discipline}
+Random $k$-fold or random stratified splitting of a transaction stream lets the model train on later behavior to predict earlier transactions, which is a form of lookahead and does not mirror deployment. In \texttt{src/preprocess.py} the data are sorted by $\text{Time}$ and split sequentially $60\% / 20\% / 20\%$ into train, validation, and test, so the model is fitted on the past and evaluated on the future. All $360$ fraudulent records in the first $60\%$ are removed before fitting, leaving $170{,}524$ legitimate transactions in \texttt{train\_legit.csv}. The validation and test partitions keep their natural fraud rates. Roles are strict: the training split fits the scaler and the GMM; the validation split calibrates operating thresholds; the test split is used only for reporting.
+
+\begin{table}[h!]
+\centering
+\caption{Chronological Dataset Partitioning and Class Distribution}
+\vspace{0.2cm}
+\renewcommand{\arraystretch}{1.25}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{llcccc}
+\toprule
+\rowcolor{tableheader}
+\textbf{Partition} & \textbf{Artifact File} & \textbf{Total Rows} & \textbf{Legit ($\mathbf{0}$)} & \textbf{Fraud ($\mathbf{1}$)} & \textbf{Fraud Rate} \\
+\midrule
+Raw Dataset (100\%) & \texttt{creditcard.csv} & $284{,}807$ & $284{,}315$ & $492$ & $0.173\%$ \\
+\rowcolor{rowalt}
+Train Raw (0\%--60\%) & \textit{(pre-filter)} & $170{,}884$ & $170{,}524$ & $360$ \textit{(dropped)} & $0.211\%$ \\
+\textbf{Train Legit} & \texttt{train\_legit.csv} & $\mathbf{170{,}524}$ & $\mathbf{170{,}524}$ & $\mathbf{0}$ & $\mathbf{0.000\%}$ \\
+\rowcolor{rowalt}
+Validation (60\%--80\%) & \texttt{val.csv} & $56{,}961$ & $56{,}904$ & $57$ & $0.100\%$ \\
+Test (80\%--100\%) & \texttt{test.csv} & $56{,}962$ & $56{,}887$ & $75$ & $0.132\%$ \\
+\bottomrule
+\end{tabular}
+\label{tab:splits}
+\end{table}
+
+\subsection{Removal of the Non-Stationary \texttt{Time} Feature}
+\label{sec:time}
+Because the split is chronological, the three partitions occupy non-overlapping time intervals:
+\begin{itemize}
+    \item Training: $\text{Time} \in [0, \approx 120{,}396]$ s.
+    \item Validation: $\text{Time} \in [\approx 120{,}396,\ \approx 145{,}247]$ s.
+    \item Test: $\text{Time} \in [\approx 145{,}248,\ 172{,}792]$ s ($\approx 7.6$ hours).
+\end{itemize}
+If $\text{Time}$ is kept as an input feature, the density estimator learns that legitimate transactions occur only in the training interval. Every test transaction then lies outside the training support, which depresses its likelihood and inflates its anomaly score regardless of behavior; this produces false alarms and lowers precision. Strictly speaking this is a \emph{covariate shift / extrapolation} problem rather than label leakage, and raw seconds since an arbitrary collection start also carry no intrinsic behavioral meaning. $\text{Time}$ is therefore used only for ordering and dropped before scaling, leaving $D = 29$ features ($\text{V1}$--$\text{V28}$, $\text{Amount}$). Section~\ref{sec:ablation} quantifies the effect with a controlled ablation.
+
+Standardization ($\mu = 0, \sigma = 1$) via \texttt{StandardScaler} is fitted only on \texttt{train\_legit.csv} and applied with \texttt{scaler.transform()} to validation and test.
+
+\section{Mathematical Formulation \& Methodology}
+
+\subsection{Multimodal Density Estimation via Gaussian Mixture Models}
+Legitimate card usage is plausibly multimodal (small routine purchases, recurring subscriptions, high-value travel), which a single Gaussian cannot represent. We model the standardized legitimate feature vector $\mathbf{x} \in \mathbb{R}^{D}$ ($D = 29$) as a convex combination of $K$ multivariate Gaussians:
+
+\begin{equation}
+p(\mathbf{x} \mid \Theta) = \sum_{k=1}^{K} \pi_k \, \mathcal{N}(\mathbf{x} \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k)
+\end{equation}
+
+where $\Theta = \{\pi_k, \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k\}_{k=1}^{K}$, $\pi_k > 0$, $\sum_k \pi_k = 1$, $\boldsymbol{\mu}_k \in \mathbb{R}^{D}$, and $\boldsymbol{\Sigma}_k \in \mathbb{R}^{D \times D}$ is a symmetric positive-definite full covariance matrix:
+
+\begin{equation}
+\mathcal{N}(\mathbf{x} \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k) = \frac{1}{(2\pi)^{D/2} |\boldsymbol{\Sigma}_k|^{1/2}} \exp \left( -\tfrac{1}{2} (\mathbf{x} - \boldsymbol{\mu}_k)^{\top} \boldsymbol{\Sigma}_k^{-1} (\mathbf{x} - \boldsymbol{\mu}_k) \right)
+\end{equation}
+
+Although $\text{V1}$--$\text{V28}$ are globally uncorrelated by construction of PCA, within a local spending regime (and together with $\text{Amount}$) cross-feature correlations can reappear. \texttt{covariance\_type="full"} lets each component orient its ellipsoid along such local dependencies, unlike \texttt{diag} or \texttt{spherical} covariances.
+
+\subsection{Expectation-Maximization (EM) Parameter Estimation}
+Given $N = 170{,}524$ i.i.d.\ legitimate training samples $\mathcal{X}$, the log-likelihood is
+
+\begin{equation}
+\mathcal{L}(\Theta; \mathcal{X}) = \sum_{i=1}^{N} \ln \left( \sum_{k=1}^{K} \pi_k \, \mathcal{N}(\mathbf{x}_i \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k) \right)
+\end{equation}
+
+and is maximized iteratively with EM:
+\begin{itemize}
+    \item \textbf{E-Step:} compute responsibilities
+    \begin{equation}
+    \gamma_{ik} = \frac{\pi_k \, \mathcal{N}(\mathbf{x}_i \mid \boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k)}{\sum_{j=1}^{K} \pi_j \, \mathcal{N}(\mathbf{x}_i \mid \boldsymbol{\mu}_j, \boldsymbol{\Sigma}_j)}
+    \end{equation}
+    \item \textbf{M-Step:} with $N_k = \sum_i \gamma_{ik}$,
+    \begin{equation}
+    \pi_k^{\text{new}} = \frac{N_k}{N}, \qquad \boldsymbol{\mu}_k^{\text{new}} = \frac{1}{N_k} \sum_{i=1}^{N} \gamma_{ik} \mathbf{x}_i, \qquad \boldsymbol{\Sigma}_k^{\text{new}} = \frac{1}{N_k} \sum_{i=1}^{N} \gamma_{ik} (\mathbf{x}_i - \boldsymbol{\mu}_k^{\text{new}})(\mathbf{x}_i - \boldsymbol{\mu}_k^{\text{new}})^{\top} + \epsilon \mathbf{I}
+    \end{equation}
+\end{itemize}
+where $\epsilon = 10^{-6}$ (\texttt{reg\_covar}) keeps covariances positive definite. Because the objective is non-convex, EM converges to local optima that depend on initialization; the final model uses $n_{\text{init}} = 5$ restarts, but Sections~\ref{sec:aicbic} and~\ref{sec:regcov} show that this sensitivity is material.
+
+\subsection{Information-Theoretic Model Selection (AIC \& BIC)}
+In $D = 29$ dimensions each full-covariance component has $D = 29$ mean parameters and $D(D+1)/2 = 435$ covariance parameters, plus $K-1$ free mixture weights in total:
+
+\begin{equation}
+P(K) = K \left( D + \tfrac{D(D+1)}{2} \right) + (K - 1) = 465K - 1
+\end{equation}
+
+At $K = 10$ this gives $P(10) = 4{,}649$ parameters for $N = 170{,}524$ observations ($\approx 36.7$ samples per parameter). Model complexity is compared with
+
+\begin{equation}
+\text{AIC}(K) = 2P(K) - 2\mathcal{L}(\hat{\Theta}_K; \mathcal{X}), \qquad \text{BIC}(K) = P(K)\ln(N) - 2\mathcal{L}(\hat{\Theta}_K; \mathcal{X})
+\end{equation}
+
+Note that these criteria measure density fit on the training data, not fraud-ranking quality.
+
+\subsection{Anomaly Scoring Function}
+An unseen transaction is scored by its negative log-likelihood under the fitted legitimate model:
+
+\begin{equation}
+s(\mathbf{x}) = -\ln p(\mathbf{x} \mid \hat{\Theta}) = -\ln \left( \sum_{k=1}^{K} \hat{\pi}_k \, \mathcal{N}(\mathbf{x} \mid \hat{\boldsymbol{\mu}}_k, \hat{\boldsymbol{\Sigma}}_k) \right)
+\end{equation}
+
+computed with the log-sum-exp trick (\texttt{score\_samples()}). Higher scores indicate lower density and greater anomaly. The score is continuous, so any operating point can be selected after training without refitting.
+
+\subsection{Threshold Calibration and Evaluation Protocol}
+\label{sec:protocol}
+\textbf{Validation-derived thresholds.} For a target false-positive budget $b \in \{0.1\%, 0.5\%, 1.0\%\}$, the cutoff $\tau_b$ is the $(1-b)$-quantile (\texttt{np.quantile}, linear interpolation) of the anomaly scores of the \emph{legitimate validation} transactions ($56{,}904$ rows). The cutoff is then applied once, unchanged, to the test set. For $b = 0.1\%$ this gives $\tau = 114.62$. No test label or test score is used to pick any threshold. On the validation split the model attains PR-AUC $0.4782$ and ROC-AUC $0.9351$.
+
+\textbf{Metrics.} PR-AUC is computed by trapezoidal integration of the precision-recall curve (\texttt{sklearn.metrics.auc}), which can differ slightly from average precision. The random-guess PR-AUC equals the test prevalence ($75/56{,}962 = 0.0013$). Top-$K$ results are pure rankings and need no threshold.
+
+\section{Experimental Setup \& Model Selection Results}
+\label{sec:aicbic}
+
+Table~\ref{tab:aic_bic} reports the $K \in \{1,\dots,10\}$ AIC/BIC sweep on the $170{,}524 \times 29$ scaled legitimate training matrix. The sweep was run with a single initialization ($n_{\text{init}} = 1$); the final model uses $n_{\text{init}} = 5$.
+
+\begin{table}[h!]
+\centering
+\caption{Information Criterion Sweep ($K = 1 \dots 10$, $D = 29$, $n_{\text{init}} = 1$)}
+\vspace{0.2cm}
+\renewcommand{\arraystretch}{1.22}
+\small
+\begin{tabular}{ccccl}
+\toprule
+\rowcolor{tableheader}
+\textbf{$K$} & \textbf{Params ($P$)} & \textbf{AIC} & \textbf{BIC} & \textbf{$\Delta$ BIC (vs.\ $K-1$)} \\
+\midrule
+$1$ & $464$ & $13{,}356{,}086.41$ & $13{,}360{,}748.05$ & --- \textit{(unimodal baseline)} \\
+\rowcolor{rowalt}
+$2$ & $929$ & $12{,}180{,}506.25$ & $12{,}189{,}839.57$ & $-1{,}170{,}908.48$ \\
+$3$ & $1{,}394$ & $9{,}941{,}768.82$ & $9{,}955{,}773.83$ & $-2{,}234{,}065.74$ \\
+\rowcolor{rowalt}
+$4$ & $1{,}859$ & $1{,}599{,}082.15$ & $1{,}617{,}758.83$ & $-8{,}338{,}015.00$ \textit{(largest drop)} \\
+$5$ & $2{,}324$ & $-5{,}050{,}350.59$ & $-5{,}027{,}002.22$ & $-6{,}644{,}761.05$ \\
+\rowcolor{rowalt}
+$6$ & $2{,}789$ & $-1{,}983{,}424.04$ & $-1{,}955{,}403.98$ & $+3{,}071{,}598.24$ \textit{(EM local optimum)} \\
+$7$ & $3{,}254$ & $-7{,}275{,}442.54$ & $-7{,}242{,}750.80$ & $-5{,}287{,}346.82$ \\
+\rowcolor{rowalt}
+$8$ & $3{,}719$ & $-8{,}635{,}744.41$ & $-8{,}598{,}380.99$ & $-1{,}355{,}630.19$ \\
+$9$ & $4{,}184$ & $-8{,}799{,}732.95$ & $-8{,}757{,}697.85$ & $-159{,}316.86$ \\
+\rowcolor{rowalt}
+$\mathbf{10}$ & $\mathbf{4{,}649}$ & $\mathbf{-9{,}820{,}186.41}$ & $\mathbf{-9{,}773{,}479.62}$ & $\mathbf{-1{,}015{,}781.77}$ \textbf{(lowest in sweep)} \\
+\bottomrule
+\end{tabular}
+\label{tab:aic_bic}
+\end{table}
+
+\textbf{Observations.}
+\begin{enumerate}
+    \item \textbf{Unimodal density fits poorly.} A single Gaussian has $\text{BIC} = 13.36\times10^{6}$; moving from $K=1$ to $K=5$ lowers BIC by more than $18.38\times10^{6}$, consistent with multiple behavioral clusters.
+    \item \textbf{EM sensitivity at $K=6$.} The single-initialization run at $K=6$ converged to a poor local optimum ($\text{BIC} = -1.96\times10^{6}$ versus $-7.24\times10^{6}$ at $K=7$), illustrating the non-convexity of the likelihood and motivating $n_{\text{init}} = 5$ for the final model.
+    \item \textbf{$K=10$ is the boundary of the sweep.} Both criteria are lowest at $K=10$, but BIC is still decreasing there ($\Delta\text{BIC} = -1.02\times10^{6}$), so $K=10$ is the best value \emph{in the range tested}, not a confirmed optimum. The final estimator (\texttt{models/best\_gmm.joblib}) uses $K=10$, \texttt{covariance\_type="full"}, $n_{\text{init}}=5$, and \texttt{random\_state=42}.
+\end{enumerate}
+
+\subsection{Covariance Conditioning Diagnostic}
+Inspecting the fitted $K=10$ covariances shows that $9$ of $10$ components have a minimum eigenvalue at or near the regularization floor ($\lambda_{\min} \approx 10^{-6} = \epsilon$), with condition numbers of order $10^{6}$--$10^{7}$. The average training log-likelihood is $+31.42$ nats per sample in the $29$-dimensional standardized space. These values indicate that several components concentrate on very low-variance directions. Section~\ref{sec:regcov} examines how sensitive the results are to this.
+
+\section{Held-Out Test Set Evaluation \& Operational Triage}
+
+The serialized scaler and $K=10$ GMM were evaluated on the chronological test partition ($56{,}962$ transactions: $56{,}887$ legitimate, $75$ fraudulent; prevalence $0.132\%$).
+
+\subsection{Global Ranking Performance (ROC-AUC vs.\ PR-AUC)}
+ROC-AUC's false-positive rate is dominated by the $\approx 56{,}887$ true negatives, so it can stay high while false alarms outnumber true frauds. We therefore treat \textbf{PR-AUC} as the primary metric, since it directly penalizes false positives relative to detections.
+
+\begin{table}[h!]
+\centering
+\caption{Global Ranking Metrics on the Held-Out Test Set ($N_{\text{test}} = 56{,}962$)}
+\vspace{0.2cm}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{lcl}
+\toprule
+\rowcolor{tableheader}
+\textbf{Metric} & \textbf{Test Score} & \textbf{Interpretation} \\
+\midrule
+Random-guess PR-AUC & $0.0013$ & Equals test prevalence ($75/56{,}962$) \\
+\rowcolor{rowalt}
+\textbf{GMM Test PR-AUC} & $\mathbf{0.4736}$ & $359.7\times$ over random (no fraud labels in training) \\
+\textbf{GMM Test ROC-AUC} & $\mathbf{0.9106}$ & Versus $0.5000$ for random ranking \\
+\bottomrule
+\end{tabular}
+\label{tab:global_metrics}
+\end{table}
+
+\subsection{Validation-Calibrated FPR Budgets}
+Risk teams bound the false-positive rate to avoid wrongful card declines. Table~\ref{tab:fpr_budgets} applies the three validation-derived cutoffs (Section~\ref{sec:protocol}) to the test set.
+
+\begin{table}[h!]
+\centering
+\caption{Test Performance at Validation-Calibrated FPR Operating Points}
+\vspace{0.2cm}
+\renewcommand{\arraystretch}{1.25}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{cccccccc}
+\toprule
+\rowcolor{tableheader}
+\textbf{Val FPR} & \textbf{Cutoff $\tau$} & \textbf{TP} & \textbf{Alerts} & \textbf{FP} & \textbf{Test FPR} & \textbf{Recall} & \textbf{Precision} \\
+\midrule
+$\mathbf{\le 0.10\%}$ & $114.62$ & $57/75$ & $92$ & $35$ & $0.062\%$ & $\mathbf{76.00\%}$ & $\mathbf{61.96\%}$ \\
+\rowcolor{rowalt}
+$\le 0.50\%$ & $68.72$ & $59/75$ & $251$ & $192$ & $0.338\%$ & $78.67\%$ & $23.51\%$ \\
+$\le 1.00\%$ & $60.69$ & $59/75$ & $405$ & $346$ & $0.608\%$ & $78.67\%$ & $14.57\%$ \\
+\bottomrule
+\end{tabular}
+\label{tab:fpr_budgets}
+\end{table}
+
+At the strictest budget ($\tau = 114.62$) the system flags $92$ transactions, intercepting $57$ of $75$ frauds ($76.00\%$ recall) with $35$ false alarms ($61.96\%$ precision). Recall plateaus at $78.67\%$ ($59/75$) for looser budgets while precision falls sharply, so the extra $2$ frauds cost $159$ additional alerts at the $0.5\%$ budget.
+
+\textbf{Validation-to-test shift.} On all three budgets the realized test FPR is below its nominal value ($0.062\%$ vs.\ $0.10\%$, $0.338\%$ vs.\ $0.5\%$, $0.608\%$ vs.\ $1.0\%$). For the $0.1\%$ budget, validation permits $56$ false alarms while test produced $35$; under a simple Poisson model this is a shortfall of about $2.8$ standard deviations, which suggests the validation window had a heavier legitimate score tail than the test window rather than pure sampling noise. The thresholds are therefore conservative on this test set, but they should not be assumed to transfer exactly across time windows.
+
+\subsection{Capacity-Constrained Analyst Alert Triage ($\text{Precision@}K$ \& $\text{Recall@}K$)}
+For human review, capacity is a fixed queue size $K$. All $56{,}962$ test transactions are ranked by $s(\mathbf{x})$ and the top $K$ evaluated (Table~\ref{tab:topk}); this requires no threshold.
+
+\begin{table}[h!]
+\centering
+\caption{Analyst Alert Queue Triage ($\text{Precision@}K$ and $\text{Recall@}K$)}
+\vspace{0.2cm}
+\renewcommand{\arraystretch}{1.25}
+\small
+\begin{tabular}{ccccc}
+\toprule
+\rowcolor{tableheader}
+\textbf{Queue ($K$)} & \textbf{TP} & \textbf{Precision@$K$} & \textbf{Recall@$K$} & \textbf{Lift vs.\ Random ($0.132\%$)} \\
+\midrule
+$\text{Top-}50$ & $29/75$ & $58.00\%$ & $38.67\%$ & $440.5\times$ \\
+\rowcolor{rowalt}
+$\mathbf{\text{Top-}100}$ & $\mathbf{57/75}$ & $\mathbf{57.00\%}$ & $\mathbf{76.00\%}$ & $\mathbf{432.9\times}$ \\
+$\text{Top-}200$ & $58/75$ & $29.00\%$ & $77.33\%$ & $220.3\times$ \\
+\rowcolor{rowalt}
+$\text{Top-}500$ & $59/75$ & $11.80\%$ & $78.67\%$ & $89.6\times$ \\
+\bottomrule
+\end{tabular}
+\label{tab:topk}
+\end{table}
+
+The top $100$ transactions ($0.176\%$ of test volume, spanning a window of about $7.6$ hours) contain $57$ of the $75$ frauds ($76.00\%$ recall) at $57.00\%$ precision, a $432.9\times$ concentration over random audit. The two operating modes are complementary: the $\tau = 114.62$ cutoff suits automated authorization ($92$ alerts, $61.96\%$ precision), and a Top-$100$ queue suits human review ($100$ alerts, $57.00\%$ precision); both catch the same $57$ frauds.
+
+\subsection{Confusion Matrix at the Validation-Calibrated Threshold}
+Table~\ref{tab:cm} gives the test confusion matrix at $\tau = 114.62$.
+
+\begin{table}[h!]
+\centering
+\caption{Test Confusion Matrix at the Validation-Calibrated Cutoff ($\tau = 114.62$)}
+\vspace{0.2cm}
+\renewcommand{\arraystretch}{1.25}
+\small
+\begin{tabular}{lccl}
+\toprule
+\rowcolor{tableheader}
+\textbf{Quadrant} & \textbf{Count} & \textbf{Rate} & \textbf{Meaning} \\
+\midrule
+True Negatives (TN) & $56{,}852$ & $99.94\%$ of legit & Legitimate transactions cleared \\
+\rowcolor{rowalt}
+False Positives (FP) & $35$ & $0.062\%$ of legit & False alarms \\
+False Negatives (FN) & $18$ & $24.00\%$ of fraud & Missed frauds \\
+\rowcolor{rowalt}
+\textbf{True Positives (TP)} & $\mathbf{57}$ & $\mathbf{76.00\%}$ of fraud & Frauds intercepted \\
+\bottomrule
+\end{tabular}
+\label{tab:cm}
+\end{table}
+
+\begin{table}[h!]
+\centering
+\caption{Classification Report at $\tau = 114.62$}
+\vspace{0.2cm}
+\renewcommand{\arraystretch}{1.2}
+\small
+\begin{tabular}{lcccc}
+\toprule
+\rowcolor{tableheader}
+\textbf{Class} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} & \textbf{Support} \\
+\midrule
+Legitimate ($0$) & $0.9997$ & $0.9994$ & $0.9995$ & $56{,}887$ \\
+\rowcolor{rowalt}
+Fraud ($1$) & $0.6196$ & $0.7600$ & $0.6826$ & $75$ \\
+Accuracy & --- & --- & $0.9991$ & $56{,}962$ \\
+\rowcolor{rowalt}
+Macro average & $0.8096$ & $0.8797$ & $0.8411$ & $56{,}962$ \\
+Weighted average & $0.9992$ & $0.9991$ & $0.9991$ & $56{,}962$ \\
+\bottomrule
+\end{tabular}
+\label{tab:classreport}
+\end{table}
+
+The fraud-class F1 is $2\,\text{TP}/(2\,\text{TP}+\text{FP}+\text{FN}) = 114/167 = 0.6826$. The overall accuracy of $99.91\%$ is dominated by the legitimate class and is not informative on its own.
+
+\subsection{Baseline Benchmarking}
+\label{sec:baselines}
+All models use the same chronological splits and the same $29$ scaled features. Unsupervised models are trained on \texttt{train\_legit.csv}; the supervised reference is a class-balanced logistic regression trained with labels on the first $60\%$ of the time-ordered data (including its $360$ frauds). Operating points use the same validation-derived $0.1\%$ FPR protocol.
+
+\begin{table}[h!]
+\centering
+\caption{Baseline Comparison on the Held-Out Test Set (Operating Point: Validation-Derived $\text{FPR} \le 0.1\%$)}
+\vspace{0.2cm}
+\renewcommand{\arraystretch}{1.25}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{llcccc}
+\toprule
+\rowcolor{tableheader}
+\textbf{Model} & \textbf{Paradigm} & \textbf{PR-AUC} & \textbf{ROC-AUC} & \textbf{Recall} & \textbf{Precision} \\
+\midrule
+Isolation Forest ($n=200$) & Unsup.\ tree & $0.0358$ & $0.9470$ & $0.0\%$ ($0/75$) & $0.0\%$ (0 TP, 42 FP) \\
+\rowcolor{rowalt}
+Single Gaussian ($K=1$) & Unsup.\ Mahalanobis & $0.1443$ & $0.9594$ & $0.0\%$ ($0/75$) & $0.0\%$ (0 TP, 37 FP) \\
+\textbf{Full-Cov.\ GMM ($K=10$)} & \textbf{Unsup.\ mixture (ours)} & $\mathbf{0.4736}$ & $0.9106$ & $\mathbf{76.0\%}$ ($57/75$) & $\mathbf{62.0\%}$ (57 TP, 35 FP) \\
+\rowcolor{rowalt}
+Logistic Reg.\ (balanced) & Supervised ref. & $0.7438$ & $0.9821$ & $80.0\%$ ($60/75$) & $49.6\%$ (60 TP, 61 FP) \\
+\bottomrule
+\end{tabular}
+\label{tab:baselines}
+\end{table}
+
+\textbf{Reading the comparison.}
+\begin{itemize}
+    \item The GMM improves on both unsupervised baselines by a wide margin in PR-AUC ($0.4736$ vs.\ $0.1443$ and $0.0358$). At the $0.1\%$ budget, Isolation Forest and the single Gaussian recover no frauds, whereas the GMM recovers $57$.
+    \item The supervised logistic regression is clearly stronger as a ranker (PR-AUC $0.7438$, ROC-AUC $0.9821$). The unsupervised GMM reaches about $64\%$ of that PR-AUC ($0.4736/0.7438$) without any fraud labels. On this static, chronologically split benchmark, test-period frauds evidently resemble training-period frauds, so no penalty for labeled training shows up; the potential advantage of label-free methods on novel fraud types is therefore not demonstrated here.
+    \item At the single $0.1\%$ operating point the GMM shows higher precision ($62.0\%$ vs.\ $49.6\%$) while the supervised model catches $3$ more frauds ($60$ vs.\ $57$). The two alert volumes differ ($92$ vs.\ $121$; the logistic model's $61$ false alarms correspond to a $0.107\%$ test FPR, slightly above the nominal budget), so this comparison is not matched; the threshold-free PR-AUC is the cleaner summary.
+    \item The single Gaussian and Isolation Forest have \emph{higher} ROC-AUC than the $K=10$ GMM ($0.9594$ and $0.9470$ vs.\ $0.9106$). One hypothesis is that the narrow, near-singular GMM components sharpen the extreme top of the ranking (where PR-AUC lives) at the expense of ordering moderately anomalous transactions. This is consistent with the diagnostic in Section~\ref{sec:aicbic} but has not been tested directly.
+\end{itemize}
+The logistic regression is untuned and serves as a lower bound on what supervised learning can achieve; stronger supervised models (e.g., gradient-boosted trees) are planned.
+
+\subsection{Controlled Ablation: Effect of the \texttt{Time} Feature}
+\label{sec:ablation}
+To isolate the effect of the timestamp from model-selection choices, the same architecture ($K=10$, full covariance, $n_{\text{init}}=5$, \texttt{random\_state=42}) and identical splits were used with and without $\text{Time}$.
+
+\begin{table}[h!]
+\centering
+\caption{Time Ablation at Fixed Architecture (Test Set)}
+\vspace{0.2cm}
+\renewcommand{\arraystretch}{1.25}
+\small
+\begin{tabular}{lccc}
+\toprule
+\rowcolor{tableheader}
+\textbf{Condition} & \textbf{Features} & \textbf{PR-AUC} & \textbf{ROC-AUC} \\
+\midrule
+With \texttt{Time} & $30$ & $0.2696$ & $0.8942$ \\
+\rowcolor{rowalt}
+\textbf{Without \texttt{Time} (production)} & $\mathbf{29}$ & $\mathbf{0.4736}$ & $\mathbf{0.9106}$ \\
+\bottomrule
+\end{tabular}
+\label{tab:ablation}
+\end{table}
+
+Dropping $\text{Time}$ raises PR-AUC by $0.2040$ in absolute terms ($+75.7\%$ relative). Test timestamps ($[145{,}248,\,172{,}792]$ s) lie entirely outside the training range ($[0,\,120{,}396]$ s), which is consistent with the mechanism described in Section~\ref{sec:time}. \textbf{Caveat:} each condition is a single run with one seed. Because Section~\ref{sec:regcov} shows that PR-AUC can vary widely across initializations, the magnitude of this gap should be confirmed with multiple seeds before being treated as precise.
+
+\subsection{Statistical Uncertainty (Bootstrap)}
+With only $75$ test frauds, point estimates are noisy. Table~\ref{tab:bootstrap} reports non-parametric bootstrap intervals from $2{,}000$ resamples of the test transactions with replacement, holding the validation-derived threshold fixed.
+
+\begin{table}[h!]
+\centering
+\caption{Bootstrap 95\% Confidence Intervals on the Test Set ($n=2{,}000$ resamples)}
+\vspace{0.2cm}
+\renewcommand{\arraystretch}{1.25}
+\small
+\begin{tabular}{lccc}
+\toprule
+\rowcolor{tableheader}
+\textbf{Metric} & \textbf{Point Estimate} & \textbf{Bootstrap Mean} & \textbf{95\% CI} \\
+\midrule
+PR-AUC & $0.4736$ & $0.499$ & $[0.370,\ 0.624]$ \\
+\rowcolor{rowalt}
+Recall ($\tau=114.62$) & $76.00\%$ & $76.1\%$ & $[65.6\%,\ 85.3\%]$ \\
+Precision ($\tau=114.62$) & $61.96\%$ & $62.1\%$ & $[52.0\%,\ 72.0\%]$ \\
+\bottomrule
+\end{tabular}
+\label{tab:bootstrap}
+\end{table}
+
+The intervals are wide because the positive class is small. Differences between models smaller than this range (for example small PR-AUC changes between hyperparameter settings) should not be over-interpreted. Note these intervals capture test-sampling variance only, not variance from EM initialization or training-data resampling.
+
+\subsection{Sensitivity to Covariance Regularization}
+\label{sec:regcov}
+To test whether the results depend on the near-singular components, \texttt{reg\_covar} was varied over four orders of magnitude (Table~\ref{tab:regcov}). \textbf{These runs used $n_{\text{init}}=1$} and are therefore not directly comparable with the production model ($n_{\text{init}}=5$).
+
+\begin{table}[h!]
+\centering
+\caption{\texttt{reg\_covar} Sensitivity ($K=10$, $n_{\text{init}}=1$, test-set diagnostic)}
+\vspace{0.2cm}
+\renewcommand{\arraystretch}{1.25}
+\small
+\begin{tabular}{ccccc}
+\toprule
+\rowcolor{tableheader}
+\textbf{\texttt{reg\_covar}} & \textbf{Min.\ eigenvalue} & \textbf{Max.\ condition no.} & \textbf{Test PR-AUC} & \textbf{TP / FP (val.\ cutoff)} \\
+\midrule
+$10^{-6}$ & $1.0\times10^{-6}$ & $7.8\times10^{6}$ & $0.1817$ & $11 / 30$ \\
+\rowcolor{rowalt}
+$10^{-4}$ & $1.0\times10^{-4}$ & $1.8\times10^{5}$ & $0.2708$ & $35 / 34$ \\
+$10^{-3}$ & $1.0\times10^{-3}$ & $2.9\times10^{4}$ & $0.1806$ & $8 / 32$ \\
+\rowcolor{rowalt}
+$10^{-2}$ & $1.0\times10^{-2}$ & $4.0\times10^{3}$ & $0.1445$ & $5 / 31$ \\
+\bottomrule
+\end{tabular}
+\label{tab:regcov}
+\end{table}
+
+Two points follow. First, larger \texttt{reg\_covar} reduces condition numbers as expected. Second, and more importantly, the first row uses the \emph{same} \texttt{reg\_covar} as the production model yet yields PR-AUC $0.1817$ ($11$ TP) instead of $0.4736$ ($57$ TP); the only difference is $n_{\text{init}}=1$ versus $5$. The headline result is therefore sensitive to EM initialization, and the table cannot rank \texttt{reg\_covar} values reliably. We do \emph{not} recommend changing \texttt{reg\_covar} on this evidence. A proper study requires multiple seeds with $n_{\text{init}}=5$ and selection of \texttt{reg\_covar} on validation PR-AUC rather than test (the test column above is a diagnostic only).
+
+\section{Limitations \& Future Work}
+
+\begin{enumerate}
+    \item \textbf{Initialization Sensitivity and Single-Seed Results.} The reported GMM numbers come from one fitted model (\texttt{random\_state=42}). Section~\ref{sec:regcov} indicates large run-to-run variation at $n_{\text{init}}=1$. Phase~2 will report mean $\pm$ s.d.\ of validation and test metrics over multiple seeds with $n_{\text{init}}=5$, and repeat the Time ablation the same way.
+    \item \textbf{Sweep Boundary and Single-Initialization Sweep.} $K=10$ is the edge of the tested range and the sweep used $n_{\text{init}}=1$. The sweep will be repeated with $n_{\text{init}}=5$ and extended to $K=15$, and $K$ should be chosen by validation PR-AUC as well as information criteria.
+    \item \textbf{Near-Singular Covariances.} Nine of ten components sit at the regularization floor. The effect of \texttt{reg\_covar} must be assessed with the multi-seed protocol above before the production configuration is changed.
+    \item \textbf{Heavy Skew in \texttt{Amount}.} $\text{Amount}$ spans \$0--\$25,691.16. A $\ln(1+\text{Amount})$ transform or \texttt{RobustScaler} may improve density fit in the high-value tail and will be tested.
+    \item \textbf{Unexplained Misses.} $18$ of $75$ frauds ($24.00\%$) score below $\tau$. Whether they are genuinely similar to legitimate behavior, absorbed by degenerate components, or affected by insufficient $K$ is undetermined; per-component responsibilities of these cases will be analyzed. Features such as cardholder velocity are not available in this PCA-anonymized dataset.
+    \item \textbf{Small Positive Class and Window Shift.} Only $75$ test frauds produce wide intervals (Table~\ref{tab:bootstrap}), and validation-to-test FPR differences show the cutoff does not transfer exactly across windows. Sliding-window refitting and periodic threshold recalibration are required for production.
+    \item \textbf{Stronger Baselines and Hybrid Models.} The supervised reference is an untuned logistic regression. Planned work includes gradient-boosted trees, One-Class SVM, deep autoencoders, and feeding GMM scores into a supervised model as features. A test of novel-fraud robustness (e.g., holding out fraud clusters) is needed to evaluate the main motivation for unsupervised detection.
+    \item \textbf{Static, Anonymized Benchmark.} The data cover two days in 2013 and $\text{V1}$--$\text{V28}$ are anonymized components, which limits drift analysis and interpretability. Component-level Mahalanobis decomposition $(\mathbf{x} - \boldsymbol{\mu}_k)^{\top}\boldsymbol{\Sigma}_k^{-1}(\mathbf{x} - \boldsymbol{\mu}_k)$ with raw pre-PCA attributes could provide analyst reason codes in production.
+\end{enumerate}
+
+\section{Conclusion}
+
+A full-covariance Gaussian Mixture Model ($K=10$, $n_{\text{init}}=5$) trained only on chronologically earlier legitimate transactions, with the non-stationary $\text{Time}$ feature removed, reaches Test PR-AUC $0.4736$ ($359.7\times$ over random; bootstrap 95\% CI $[0.370, 0.624]$) and ROC-AUC $0.9106$ on a strictly chronological held-out test set. With the threshold $\tau = 114.62$ derived only from validation data, it intercepts $57$ of $75$ frauds ($76.00\%$ recall) at $61.96\%$ precision with $35$ false alarms; a Top-$100$ review queue achieves the same recall at $57.00\%$ precision. The model decisively outperforms Isolation Forest and a single Gaussian, while a supervised logistic regression (PR-AUC $0.7438$) shows that a meaningful gap to labeled training remains. A controlled ablation attributes a large PR-AUC loss ($0.4736 \to 0.2696$) to retaining $\text{Time}$.
+
+These results should be read with the documented caveats: they come from a single fitted model, EM-initialization sensitivity is large, $9$ of $10$ covariances are near singular, $K=10$ lies at the edge of the sweep, and confidence intervals are wide with only $75$ test frauds. Phase~2 will address these through multi-seed evaluation, an extended sweep, regularization selected on validation data, and stronger supervised and hybrid baselines.
+
+\vspace{0.5cm}
+\noindent\textbf{Dataset Attribution:} The Credit Card Fraud Detection dataset was collected and made available by Worldline and the Machine Learning Group at Universit\'e Libre de Bruxelles (ULB). Available at: \url{https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud}.
+\end{document}
