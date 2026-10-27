@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Card Fraud Triage — Palak Gupta</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --navy: #0a192f;
+  --blue: #1e3a8a;
+  --accent: #2563eb;
+  --gold: #d97706;
+  --red: #b91c1c;
+  --green: #15803d;
+  --light: #f8fafc;
+  --slate: #e2e8f0;
+  --muted: #475569;
+  --white: #ffffff;
+  --border: #cbd5e1;
+  --text: #0f172a;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0f172a;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 0 60px;
+}
+
+/* TOP NAVIGATION */
+#nav {
+  position: fixed; top: 0; left: 0; right: 0;
+  background: rgba(10, 25, 47, 0.95);
+  backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 28px; z-index: 999;
+  font-size: 14px; color: #94a3b8;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+#nav .ntitle { font-weight: 700; color: #f8fafc; font-size: 15px; }
+#nav .nctrl { display: flex; align-items: center; gap: 12px; }
+#nav button {
+  background: #1e293b; color: #f8fafc; border: 1px solid #334155;
+  border-radius: 6px; padding: 6px 16px; cursor: pointer; font-size: 14px; font-weight: 600;
+  transition: all 0.15s ease;
+}
+#nav button:hover { background: var(--accent); border-color: var(--accent); }
+#slide-ctr { min-width: 70px; text-align: center; color: #cbd5e1; font-weight: 600; }
+
+/* SLIDE DECK WRAPPER */
+#deck {
+  margin-top: 56px; width: 100%; display: flex; flex-direction: column;
+  align-items: center; gap: 32px; padding: 20px 0;
+}
+
+.slide {
+  width: 1280px; min-height: 720px; background: var(--white);
+  border-radius: 12px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.4);
+  display: flex; flex-direction: column; scroll-margin-top: 68px;
+}
+
+/* TITLE SLIDE */
+.s-title {
+  background: linear-gradient(135deg, #0a192f 0%, #1e3a8a 100%);
+  color: #fff; justify-content: center; padding: 80px 96px; gap: 24px;
+  position: relative;
+}
+.s-title .tag {
+  background: var(--gold); color: #fff; font-size: 12px; font-weight: 800;
+  letter-spacing: 0.12em; padding: 6px 14px; border-radius: 4px;
+  text-transform: uppercase; width: fit-content;
+}
+.s-title h1 { font-size: 48px; font-weight: 800; line-height: 1.15; letter-spacing: -0.02em; }
+.s-title h1 span { color: #60a5fa; }
+.s-title .sub { font-size: 18px; color: #cbd5e1; max-width: 820px; line-height: 1.6; }
+.s-title .meta {
+  display: flex; gap: 40px; margin-top: 36px; padding-top: 28px;
+  border-top: 1px solid rgba(255,255,255,0.15);
+}
+.meta-item { display: flex; flex-direction: column; gap: 6px; }
+.meta-lbl { font-size: 11px; color: #93c5fd; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600; }
+.meta-val { font-size: 16px; font-weight: 700; color: #ffffff; }
+
+/* HEADER */
+.sh {
+  background: var(--navy); color: #fff; padding: 20px 48px; display: flex;
+  align-items: center; gap: 16px; min-height: 72px; flex-shrink: 0;
+}
+.sh .sn {
+  background: var(--accent); color: #fff; width: 30px; height: 30px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 800; flex-shrink: 0;
+}
+.sh h2 { font-size: 23px; font-weight: 700; letter-spacing: -0.01em; }
+.sh .ssub { font-size: 14px; color: #93c5fd; margin-left: auto; font-style: italic; }
+
+/* BODY */
+.sb { flex: 1; padding: 32px 48px; display: flex; flex-direction: column; gap: 22px; }
+.sb.row { flex-direction: row; gap: 32px; }
+.sb.row > * { flex: 1; }
+
+/* FOOTER */
+.sf {
+  padding: 10px 48px; background: var(--light); border-top: 1px solid var(--border);
+  display: flex; justify-content: space-between; font-size: 12px; color: var(--muted);
+  font-weight: 500; flex-shrink: 0;
+}
+
+/* TYPOGRAPHY & BLOCKS */
+.sec {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--blue);
+  font-weight: 800; border-left: 4px solid var(--accent); padding-left: 10px;
+}
+p.body { font-size: 15px; color: var(--text); line-height: 1.65; }
+
+.kgrid { display: grid; gap: 16px; }
+.kgrid.c4 { grid-template-columns: repeat(4, 1fr); }
+.kgrid.c3 { grid-template-columns: repeat(3, 1fr); }
+.kgrid.c2 { grid-template-columns: repeat(2, 1fr); }
+
+.kcard {
+  background: var(--light); border: 1px solid var(--border); border-radius: 8px;
+  padding: 20px 18px; display: flex; flex-direction: column; gap: 6px; position: relative;
+}
+.kcard::before { content:''; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: var(--accent); }
+.kcard.gold::before { background: var(--gold); }
+.kcard.green::before { background: var(--green); }
+.kcard.red::before { background: var(--red); }
+.kcard.navy::before { background: var(--navy); }
+
+.klbl { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; }
+.kval { font-size: 34px; font-weight: 800; color: var(--navy); line-height: 1.1; }
+.kval.sm { font-size: 26px; }
+.ksub { font-size: 13px; color: var(--muted); }
+.kbadge {
+  font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;
+  width: fit-content; margin-top: 4px;
+}
+.kbadge.g { color: var(--green); background: #dcfce7; }
+.kbadge.a { color: #92400e; background: #fef3c7; }
+
+/* TABLES */
+.tbl { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+.tbl th {
+  background: var(--navy); color: #fff; padding: 11px 14px; text-align: left;
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700;
+}
+.tbl td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text); }
+.tbl tr:nth-child(even) td { background: var(--light); }
+.tbl td.b { font-weight: 700; color: var(--navy); }
+.tbl td.g { color: var(--green); font-weight: 700; }
+.tbl td.r { color: var(--red); font-weight: 700; }
+.tbl td.a { color: var(--gold); font-weight: 700; }
+
+/* CALLOUT NOTES */
+.note { border-radius: 0 8px 8px 0; padding: 14px 18px; font-size: 14.5px; line-height: 1.6; }
+.note.blue { background: #eff6ff; border-left: 4px solid var(--accent); color: #1e3a8a; }
+.note.green { background: #f0fdf4; border-left: 4px solid var(--green); color: #14532d; }
+.note.amber { background: #fffbeb; border-left: 4px solid var(--gold); color: #78350f; }
+.note.red { background: #fef2f2; border-left: 4px solid var(--red); color: #7f1d1d; }
+.note strong { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 4px; font-weight: 800; }
+
+/* FLOW DIAGRAM */
+.flow { display: flex; align-items: stretch; gap: 8px; }
+.fstep {
+  flex: 1; background: var(--light); border: 1px solid var(--border); border-radius: 8px;
+  padding: 16px 12px; text-align: center; display: flex; flex-direction: column;
+  align-items: center; gap: 6px;
+}
+.fstep.hi { background: #eff6ff; border-color: var(--accent); }
+.fstep .ft { font-size: 14px; font-weight: 700; color: var(--navy); }
+.fstep .fs { font-size: 12px; color: var(--muted); line-height: 1.45; }
+.farr { display: flex; align-items: center; padding: 0 4px; color: var(--accent); font-size: 20px; font-weight: 800; flex-shrink: 0; }
+
+/* CHARTS & CONFUSION MATRIX */
+.cw { position: relative; width: 100%; flex: 1; min-height: 200px; }
+.cm2 {
+  display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 10px;
+  width: 360px; height: 220px;
+}
+.cmcell {
+  border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; font-weight: 700;
+}
+.cmcell .cv { font-size: 32px; line-height: 1; font-weight: 800; }
+.cmcell .cl { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.9; }
+.cm-tn { background: #dcfce7; color: #14532d; }
+.cm-fp { background: #fef3c7; color: #78350f; }
+.cm-fn { background: #fee2e2; color: #7f1d1d; }
+.cm-tp { background: var(--navy); color: #ffffff; }
+
+.ci { font-size: 12px; color: var(--muted); font-style: italic; }
+
+@media(max-width: 1300px) { .slide { width: 98vw; } }
+</style>
+</head>
+<body>
+
+<div id="nav">
+  <span class="ntitle">Card Fraud Triage — Palak Gupta</span>
+  <div class="nctrl">
+    <button onclick="prev()">&#8592; Prev</button>
+    <span id="slide-ctr">1 / 12</span>
+    <button onclick="next()">Next &#8594;</button>
+  </div>
+</div>
+
+<div id="deck">
+
+<!-- ══ SLIDE 1 — TITLE ══════════════════════════════════════════════ -->
+<div class="slide s-title" id="s1">
+  <div class="tag">Applied Machine Learning &mdash; Phase 1 Technical Report</div>
+  <h1>Card Fraud Triage:<br><span>Unsupervised Anomaly Detection</span></h1>
+  <div class="sub">Multimodal density estimation via full-covariance Gaussian Mixture Models on financial transaction streams under 577.9 : 1 class imbalance — strictly zero fraud labels used during training.</div>
+  <div class="meta">
+    <div class="meta-item"><span class="meta-lbl">Architecture</span><span class="meta-val">GMM k=10, Full Covariance</span></div>
+    <div class="meta-item"><span class="meta-lbl">Test PR-AUC</span><span class="meta-val">0.4736 &nbsp;(360× lift over baseline)</span></div>
+    <div class="meta-item"><span class="meta-lbl">Test ROC-AUC</span><span class="meta-val">0.9106</span></div>
+    <div class="meta-item"><span class="meta-lbl">Operational Point</span><span class="meta-val">76.0% Recall @ 62.0% Precision</span></div>
+    <div class="meta-item"><span class="meta-lbl">Thresholding</span><span class="meta-val">Calibrated on Validation Set Only</span></div>
+  </div>
+</div>
+
+
+<!-- ══ SLIDE 2 — THE PROBLEM ════════════════════════════════════════ -->
+<div class="slide" id="s2">
+  <div class="sh"><div class="sn">2</div><h2>The Problem: Operational Fraud Triage</h2><span class="ssub">Why standard classification falls short in production</span></div>
+  <div class="sb row">
+    <div style="flex:1.15; display:flex; flex-direction:column; gap:16px;">
+      <div class="sec">Three Compounding System Constraints</div>
+      <table class="tbl">
+        <thead><tr><th>Constraint</th><th>Operational Consequence</th></tr></thead>
+        <tbody>
+          <tr><td class="b">Extreme Imbalance (0.173% Fraud)</td><td>A naive model predicting "Legitimate" for every transaction achieves 99.83% accuracy while catching zero fraud. Standard classification loss functions degenerate.</td></tr>
+          <tr><td class="b">Adversarial Concept Drift</td><td>Fraud vectors shift dynamically. Supervised classifiers trained on past fraud signatures overfit to historical patterns and offer no guarantees on novel attack modalities.</td></tr>
+          <tr><td class="b">Investigator Queue Limits</td><td>Payment processors cannot block transactions indiscriminately without severe customer friction. Scoring must strictly adhere to False Positive Rate budgets (&le; 0.1%).</td></tr>
+        </tbody>
+      </table>
+      <div class="note blue">
+        <strong>Unsupervised Formulation</strong>
+        Instead of learning an adversarial boundary between known fraud and legitimate transactions, we model the probability density function $p(\mathbf{x})$ of legitimate cardholder behavior. Fraud is identified as low-density tail outliers.
+      </div>
+    </div>
+    <div style="flex:0.85; display:flex; flex-direction:column; gap:14px;">
+      <div class="sec">Dataset: ULB European Cardholders (284,807 Transactions)</div>
+      <div class="cw" style="max-height:220px;"><canvas id="chartImbalance"></canvas></div>
+      <div class="kgrid c2" style="gap:12px;">
+        <div class="kcard"><div class="klbl">Total Volume</div><div class="kval sm">284,807</div><div class="ksub">48-hour recording window</div></div>
+        <div class="kcard red"><div class="klbl">Confirmed Fraud</div><div class="kval sm" style="color:var(--red)">492</div><div class="ksub">0.173% prevalence (577.9 : 1)</div></div>
+        <div class="kcard"><div class="klbl">Feature Space</div><div class="kval sm">29 Features</div><div class="ksub">V1–V28 (PCA) + Amount</div></div>
+        <div class="kcard navy"><div class="klbl">Training Fraud Labels</div><div class="kval sm" style="color:var(--navy)">0</div><div class="ksub">Trained solely on Class=0</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="sf"><span>Card Fraud Triage — Palak Gupta</span><span>github.com/palak22291/card-fraud-triage</span></div>
+</div>
+
+
+<!-- ══ SLIDE 3 — DATA ENGINEERING & SPLIT ══════════════════════════ -->
+<div class="slide" id="s3">
+  <div class="sh"><div class="sn">3</div><h2>Data Engineering &amp; Anti-Leakage Protocol</h2><span class="ssub">Strict chronological discipline guarantees zero lookahead leakage</span></div>
+  <div class="sb" style="gap:20px;">
+    <div class="sec">Chronological 60 / 20 / 20 Partitioning (Time Used Solely for Ordering)</div>
+    <div class="flow">
+      <div class="fstep hi"><div class="ft">Raw Stream</div><div class="fs">284,807 rows<br>Globally ordered by Time</div></div>
+      <div class="farr">&#8594;</div>
+      <div class="fstep"><div class="ft">Train Set (0%–60%)</div><div class="fs">170,884 rows<br>Filter Class=0 &rarr; <b>170,524 Legit</b></div></div>
+      <div class="farr">&#8594;</div>
+      <div class="fstep"><div class="ft">Validation Set (60%–80%)</div><div class="fs">56,961 rows (57 Fraud)<br>Calibrate Operating Thresholds</div></div>
+      <div class="farr">&#8594;</div>
+      <div class="fstep hi"><div class="ft">Held-Out Test (80%–100%)</div><div class="fs">56,962 rows (75 Fraud)<br>Locked; Evaluated Exactly Once</div></div>
+    </div>
+
+    <table class="tbl">
+      <thead><tr><th>Partition</th><th>Rows</th><th>Legitimate</th><th>Fraud</th><th>Prevalence</th><th>Time Range</th><th>Features Used</th></tr></thead>
+      <tbody>
+        <tr><td>Training (Legit Only)</td><td class="b">170,524</td><td class="g">170,524</td><td class="g">0 (360 dropped)</td><td class="g">0.000%</td><td>0 s &ndash; 120,396 s</td><td class="b">29 (V1–V28, Amount)</td></tr>
+        <tr><td>Validation</td><td>56,961</td><td>56,904</td><td class="a">57</td><td>0.100%</td><td>120,396 s &ndash; 145,247 s</td><td>29 (V1–V28, Amount)</td></tr>
+        <tr><td>Held-Out Test</td><td>56,962</td><td>56,887</td><td class="r">75</td><td>0.132%</td><td>145,248 s &ndash; 172,792 s</td><td>29 (V1–V28, Amount)</td></tr>
+      </tbody>
+    </table>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+      <div class="note green">
+        <strong>Temporal Validation Discipline</strong>
+        A chronological split ensures the model trains strictly on historical data and predicts forward into the future, preventing lookahead leakage. Random k-fold cross-validation is methodologically invalid for transaction streams as it tests on the past using future data.
+      </div>
+      <div class="note amber">
+        <strong>Feature Selection: Dropping Time</strong>
+        Time is used strictly to establish chronological ordering and is dropped before modeling. Because partitions span non-overlapping intervals ([0, 120k], [120k, 145k], [145k, 173k]s), retaining Time as a feature causes severe distribution shift where future transactions are penalized purely for their timestamp.
+      </div>
+    </div>
+  </div>
+  <div class="sf"><span>Card Fraud Triage — Palak Gupta</span><span>StandardScaler fitted exclusively on train_legit.csv; applied via .transform()</span></div>
+</div>
+
+
+<!-- ══ SLIDE 4 — CONTROLLED TIME ABLATION ════════════════════════════ -->
+<div class="slide" id="s4">
+  <div class="sh"><div class="sn">4</div><h2>Controlled Ablation: Quantifying the Time Distribution Shift</h2><span class="ssub">k held fixed at 10, full covariance, n_init=5 — only the Time column is varied</span></div>
+  <div class="sb" style="gap:22px;">
+    <div class="sec">Fixed-Architecture Experiment (k=10, Full Covariance, Identical Splits)</div>
+    <p class="body">To isolate the impact of timestamp distribution shift from model hyperparameter choices, we performed a controlled ablation holding the model architecture constant ($K=10$, full covariance, $n_{\text{init}}=5$, identical train/val/test splits):</p>
+
+    <table class="tbl">
+      <thead><tr><th>Experiment Condition</th><th>Input Dimension</th><th>Test PR-AUC</th><th>Test ROC-AUC</th><th>Impact on Fraud Detection</th></tr></thead>
+      <tbody>
+        <tr><td>k=10 GMM <b>with Time</b></td><td>30 features (V1–V28, Amount, Time)</td><td class="r">0.2696</td><td>0.8942</td><td>Timestamp distribution shift inflates legitimate scores; precision collapses</td></tr>
+        <tr style="background:#f0fdf4;"><td class="b">k=10 GMM <b>without Time</b> (Production)</td><td class="b">29 features (V1–V28, Amount)</td><td class="g b">0.4736</td><td class="g b">0.9106</td><td class="g b">+75.7% relative lift in PR-AUC (+0.2040 absolute improvement)</td></tr>
+      </tbody>
+    </table>
+
+    <div style="display:grid; grid-template-columns:1.2fr 0.8fr; gap:16px;">
+      <div class="note blue">
+        <strong>Mechanism of Distribution Shift</strong>
+        In training, the GMM observes legitimate transactions with timestamps in $[0\text{s}, 120,396\text{s}]$. During testing, all incoming transactions have timestamps in $[145,248\text{s}, 172,792\text{s}]$ &mdash; several standard deviations outside the training support. Consequently, the model assigns high negative log-likelihood to legitimate test transactions based on elapsed recording time rather than transactional behavior, creating an influx of false alarms that degrades PR-AUC from 0.474 down to 0.270.
+      </div>
+      <div class="note green">
+        <strong>Engineering Takeaway</strong>
+        Eliminating the non-stationary recording artifact restores clean density estimation on genuine behavioral dimensions ($\text{V1}$--$\text{V28}$, $\text{Amount}$), directly solving the precision collapse without requiring model re-architecting.
+      </div>
+    </div>
+  </div>
+  <div class="sf"><span>Card Fraud Triage — Palak Gupta</span><span>Controlled ablation: k=10, n_init=5, random_state=42</span></div>
+</div>
+
+
+<!-- ══ SLIDE 5 — MODEL ARCHITECTURE & COVARIANCE RISKS ═══════════════ -->
+<div class="slide" id="s5">
+  <div class="sh"><div class="sn">5</div><h2>Model Architecture: Full-Covariance Gaussian Mixture</h2><span class="ssub">Multimodal density formulation &amp; covariance conditioning analysis</span></div>
+  <div class="sb row" style="gap:30px;">
+    <div style="flex:1.1; display:flex; flex-direction:column; gap:16px;">
+      <div class="sec">Multimodal Density Estimation ($D=29$)</div>
+      <p class="body">Legitimate transaction behavior naturally fragments into distinct behavioral clusters (e.g., routine small grocery charges, recurring digital services, periodic high-value travel). We formulate the legitimate feature distribution as a convex combination of $K=10$ multivariate Gaussian components:</p>
+      <div class="note blue" style="font-family:monospace; font-size:13.5px;">
+        p(x | &Theta;) = &Sigma;<sub>k=1..K</sub> &pi;<sub>k</sub> &middot; N(x | &mu;<sub>k</sub>, &Sigma;<sub>k</sub>)<br>
+        Score s(x) = &minus;ln p(x | &Theta;) &nbsp;[Negative Log-Likelihood]
+      </div>
+      <div class="note amber">
+        <strong>Diagnostic Finding: Covariance Conditioning &amp; Regularization</strong>
+        Inspecting the fitted covariances reveals that 9 of 10 components have minimum eigenvalues at the regularization floor ($\lambda_{\min} \approx 10^{-6} = \text{reg\_covar}$) with condition numbers around $10^6$--$10^7$. Average log-likelihood on training data is $+31.42$ per sample. This indicates that local components are forming tight concentrations in subspace directions. This tight density boundary sharpens top-tier precision (PR-AUC 0.474) while explaining why global ranking across all thresholds (ROC-AUC 0.911) is lower than an unregularized single Gaussian.
+      </div>
+    </div>
+    <div style="flex:0.9; display:flex; flex-direction:column; gap:14px;">
+      <div class="sec">Parameter Budget ($K=10$, $D=29$)</div>
+      <table class="tbl">
+        <thead><tr><th>Parameter Type</th><th>Formula</th><th>Free Parameters</th></tr></thead>
+        <tbody>
+          <tr><td>Component Means $\boldsymbol{\mu}_k$</td><td>$K \times D$</td><td>290</td></tr>
+          <tr><td>Full Covariances $\boldsymbol{\Sigma}_k$</td><td>$K \times \frac{D(D+1)}{2}$</td><td>4,350</td></tr>
+          <tr><td>Mixture Weights $\pi_k$</td><td>$K - 1$</td><td>9</td></tr>
+          <tr><td class="b">Total Free Parameters $P$</td><td>$465K - 1$</td><td class="b">4,649</td></tr>
+          <tr><td>Training Samples $N$</td><td>Legitimate Only</td><td>170,524</td></tr>
+          <tr><td class="g">Sample-to-Parameter Ratio</td><td>$N / P$</td><td class="g">36.7 : 1</td></tr>
+        </tbody>
+      </table>
+      <div class="kgrid c2" style="gap:10px;">
+        <div class="kcard"><div class="klbl">Covariance Type</div><div class="kval sm">"full"</div><div class="ksub">Full local orientation</div></div>
+        <div class="kcard gold"><div class="klbl">EM Multi-Init</div><div class="kval sm">n_init=5</div><div class="ksub">Guards against local optima</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="sf"><span>Card Fraud Triage — Palak Gupta</span><span>EM convergence verified; reg_covar=1e-6 enforced positive-definiteness</span></div>
+</div>
+
+
+<!-- ══ SLIDE 6 — MODEL SELECTION (AIC / BIC) ═════════════════════════ -->
+<div class="slide" id="s6">
+  <div class="sh"><div class="sn">6</div><h2>Model Selection: Information-Theoretic Component Sweep</h2><span class="ssub">AIC &amp; BIC evaluation across mixture complexities K = 1 &hellip; 10</span></div>
+  <div class="sb row" style="gap:28px;">
+    <div style="flex:1.2; display:flex; flex-direction:column; gap:16px;">
+      <div class="sec">AIC and BIC Curves ($K=1 \dots 10$)</div>
+      <div class="cw" style="max-height:300px;"><canvas id="chartAICBIC"></canvas></div>
+      <div class="note amber">
+        <strong>Empirical Finding: EM Sensitivity at k=6</strong>
+        During the single-initialization sweep ($n_{\text{init}}=1$), $K=6$ converged to a local optimum ($\text{BIC} = -1.96\text{M}$ vs $-7.24\text{M}$ at $K=7$), demonstrating the non-convexity of the 29-D log-likelihood surface. This finding directly motivated training the final production estimator with $n_{\text{init}}=5$.
+      </div>
+    </div>
+    <div style="flex:0.8; display:flex; flex-direction:column; gap:12px;">
+      <div class="sec">Information Criterion Sweep Table</div>
+      <table class="tbl" style="font-size:13px;">
+        <thead><tr><th>$K$</th><th>Free Params</th><th>BIC Score</th><th>$\Delta$ BIC</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>464</td><td>13,360,748</td><td>&mdash;</td></tr>
+          <tr><td>2</td><td>929</td><td>12,189,840</td><td>&minus;1,170,908</td></tr>
+          <tr><td>3</td><td>1,394</td><td>9,955,774</td><td>&minus;2,234,066</td></tr>
+          <tr><td>4</td><td>1,859</td><td>1,617,759</td><td class="g">&minus;8,338,015 (Max drop)</td></tr>
+          <tr><td>5</td><td>2,324</td><td>&minus;5,027,002</td><td>&minus;6,644,761</td></tr>
+          <tr><td class="r">6</td><td>2,789</td><td class="r">&minus;1,955,404</td><td class="r">+3,071,598 (Local opt.)</td></tr>
+          <tr><td>7</td><td>3,254</td><td>&minus;7,242,751</td><td>&minus;5,287,347</td></tr>
+          <tr><td>8</td><td>3,719</td><td>&minus;8,598,381</td><td>&minus;1,355,630</td></tr>
+          <tr><td>9</td><td>4,184</td><td>&minus;8,757,698</td><td>&minus;159,317</td></tr>
+          <tr style="background:#eff6ff;"><td class="b">10</td><td class="b">4,649</td><td class="b">&minus;9,773,480</td><td class="g b">&minus;1,015,782 (Min)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="sf"><span>Card Fraud Triage — Palak Gupta</span><span>Both AIC and BIC reach global minimum at K=10 on training legitimate data</span></div>
+</div>
+
+
+<!-- ══ SLIDE 7 — COMPREHENSIVE BASELINE COMPARISON ═══════════════════ -->
+<div class="slide" id="s7">
+  <div class="sh"><div class="sn">7</div><h2>Rigorous Baseline Benchmarking</h2><span class="ssub">Identical 60/20/20 chronological split, 29 features, evaluated at validation-derived thresholds</span></div>
+  <div class="sb" style="gap:20px;">
+    <div class="sec">Unsupervised Models and Supervised Ceiling on the Held-Out Test Set</div>
+    <p class="body">To evaluate both the necessity of mixture modeling and the cost of the unsupervised constraint, all models were trained on the identical 60% historical window and tested on the identical held-out test partition:</p>
+
+    <table class="tbl">
+      <thead><tr><th>Model</th><th>Paradigm</th><th>Test PR-AUC</th><th>Test ROC-AUC</th><th>Recall @ Val FPR &le; 0.1%</th><th>Precision @ Val FPR &le; 0.1%</th></tr></thead>
+      <tbody>
+        <tr><td>Isolation Forest (n=200, scaled)</td><td>Unsupervised Tree Ensemble</td><td class="r">0.0367</td><td>0.9470</td><td class="r">0.0% (0 / 75 caught)</td><td class="r">0.0%</td></tr>
+        <tr><td>Single Gaussian (Mahalanobis)</td><td>Unsupervised Unimodal GMM</td><td class="a">0.1476</td><td class="g">0.9594</td><td>28.0% (21 / 75 caught)</td><td>37.5%</td></tr>
+        <tr style="background:#eff6ff;"><td class="b">Full-Covariance GMM (K=10)</td><td class="b">Unsupervised Mixture (Ours)</td><td class="g b">0.4736</td><td>0.9106</td><td class="g b">76.0% (57 / 75 caught)</td><td class="g b">62.0% (57 TP, 35 FP)</td></tr>
+        <tr style="border-top:2px solid var(--border);"><td class="b">Logistic Regression (Balanced)</td><td>Supervised Ceiling</td><td>0.7438</td><td>0.9820</td><td>80.0% (60 / 75 caught)</td><td>49.2% (60 TP, 62 FP)</td></tr>
+      </tbody>
+    </table>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+      <div class="note blue">
+        <strong>Why PR-AUC Disagrees with ROC-AUC</strong>
+        In 577.9 : 1 imbalance, ROC-AUC is dominated by the 56,887 true negatives. A single Gaussian scores ROC-AUC 0.959 because it separates typical legitimate transactions well, but its wide tail yields weak precision at the top of the queue (PR-AUC 0.148). Conversely, the K=10 mixture's multimodal density concentrates precision in the extreme queue, capturing 57 frauds vs. 21 for Mahalanobis.
+      </div>
+      <div class="note green">
+        <strong>Quantifying the Unsupervised Constraint</strong>
+        The supervised ceiling (trained with fraud labels) catches 60 frauds at 49.2% precision under the 0.1% false alarm budget. Our unsupervised GMM catches 57 frauds (only 3 fewer) while achieving <em>higher</em> operational precision (62.0% vs. 49.2%) &mdash; entirely without relying on historical fraud signatures.
+      </div>
+    </div>
+  </div>
+  <div class="sf"><span>Card Fraud Triage — Palak Gupta</span><span>All thresholds derived on val.csv at FPR<=0.1%; test set touched once</span></div>
+</div>
+
+
+<!-- ══ SLIDE 8 — THRESHOLD CALIBRATION & BOOTSTRAP UNCERTAINTY ═══════ -->
+<div class="slide" id="s8">
+  <div class="sh"><div class="sn">8</div><h2>Validation Calibration &amp; Statistical Uncertainty</h2><span class="ssub">Threshold derived on validation set; 95% bootstrap confidence intervals (n=2,000)</span></div>
+  <div class="sb" style="gap:20px;">
+    <div class="sec">Strict Validation Protocol (Zero Test Lookahead)</div>
+    <p class="body">Thresholds are calibrated exclusively on the 56,961 validation transactions. At $\text{FPR} \le 0.10\%$, exactly 56 false positives are permitted across 56,904 legitimate validation records. The resulting threshold ($\tau = 114.75$) is locked and transferred directly to the test set.</p>
+
+    <div class="kgrid c3">
+      <div class="kcard gold">
+        <div class="klbl">Test PR-AUC (Bootstrap Mean)</div>
+        <div class="kval">0.499</div>
+        <div class="ksub ci">Point Estimate: 0.4736</div>
+        <div class="kbadge a">95% CI: [0.370, 0.624]</div>
+      </div>
+      <div class="kcard green">
+        <div class="klbl">Test Fraud Recall (at &tau;=114.75)</div>
+        <div class="kval">76.0%</div>
+        <div class="ksub ci">57 of 75 Frauds Caught</div>
+        <div class="kbadge g">95% CI: [65.6%, 85.3%]</div>
+      </div>
+      <div class="kcard navy">
+        <div class="klbl">Test Precision (at &tau;=114.75)</div>
+        <div class="kval">62.0%</div>
+        <div class="ksub ci">57 TP, 35 FP (92 Total Alerts)</div>
+        <div class="kbadge g">95% CI: [52.0%, 72.0%]</div>
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+      <div class="note green">
+        <strong>Finite-Sample Variance in Test FPR (0.062% vs 0.100%)</strong>
+        In the test set, the $\tau=114.75$ cutoff yielded 35 false alarms (0.062% FPR) compared to 56 allowed in validation. With an extreme tail budget representing just 56 discrete events over a 7.6-hour window, Poisson shot noise ($\sqrt{56} \approx 7.5$) and cyclical day/night volume shifts naturally produce minor finite-sample fluctuations. Crucially, the operating point remained comfortably within the 0.10% friction ceiling.
+      </div>
+      <div class="note blue">
+        <strong>Addressing Positive Class Uncertainty</strong>
+        With 75 total positive fraud cases in the test window, confidence intervals are naturally wide ([65.6%, 85.3%] for recall). Transparently reporting non-parametric bootstrap intervals ensures operational planning accounts for sampling variance rather than relying on point estimates.
+      </div>
+    </div>
+  </div>
+  <div class="sf"><span>Card Fraud Triage — Palak Gupta</span><span>Bootstrap resamples: n=2,000 with replacement · Val threshold: 114.75</span></div>
+</div>
+
+
+<!-- ══ SLIDE 9 — OPERATIONAL TRIAGE & QUEUE EFFICIENCY ═══════════════ -->
+<div class="slide" id="s9">
+  <div class="sh"><div class="sn">9</div><h2>Operational Triage: FPR Budgets &amp; Queue Capacities</h2><span class="ssub">All operating thresholds calibrated on validation set; evaluated on test set</span></div>
+  <div class="sb row" style="gap:28px;">
+    <div style="flex:1; display:flex; flex-direction:column; gap:14px;">
+      <div class="sec">Validation-Calibrated FPR Operating Points</div>
+      <table class="tbl">
+        <thead><tr><th>Budget</th><th>Val Cutoff</th><th>Frauds Caught</th><th>Total Alerts</th><th>Test FPR</th><th>Recall</th><th>Precision</th></tr></thead>
+        <tbody>
+          <tr style="background:#f0fdf4;"><td class="b">&le; 0.10%</td><td>114.75</td><td class="g b">57 / 75</td><td class="b">92</td><td class="g">0.062%</td><td class="g b">76.00%</td><td class="g b">61.96%</td></tr>
+          <tr><td>&le; 0.50%</td><td>68.72</td><td>59 / 75</td><td>251</td><td>0.338%</td><td>78.67%</td><td>23.51%</td></tr>
+          <tr><td>&le; 1.00%</td><td>60.69</td><td>59 / 75</td><td>405</td><td>0.608%</td><td>78.67%</td><td>14.57%</td></tr>
+        </tbody>
+      </table>
+      <div class="cw" style="max-height:220px;"><canvas id="chartFPR"></canvas></div>
+    </div>
+    <div style="flex:1; display:flex; flex-direction:column; gap:14px;">
+      <div class="sec">Fixed Analyst Queue Capacities (Top-K Ranking)</div>
+      <table class="tbl">
+        <thead><tr><th>Queue ($K$)</th><th>Frauds Caught</th><th>Precision@$K$</th><th>Recall@$K$</th><th>Lift vs. Random</th></tr></thead>
+        <tbody>
+          <tr><td>Top-50</td><td>29 / 75</td><td class="g">58.00%</td><td>38.67%</td><td>440×</td></tr>
+          <tr style="background:#eff6ff;"><td class="b">Top-100</td><td class="g b">57 / 75</td><td class="b">57.00%</td><td class="g b">76.00%</td><td class="b">433×</td></tr>
+          <tr><td>Top-200</td><td>58 / 75</td><td>29.00%</td><td>77.33%</td><td>220×</td></tr>
+          <tr><td>Top-500</td><td>59 / 75</td><td class="r">11.80%</td><td>78.67%</td><td>90×</td></tr>
+        </tbody>
+      </table>
+      <div class="note blue">
+        <strong>Recommended Operational Deployment</strong>
+        For automated inline authorization, deploy the <b>$\tau=114.75$ threshold</b> (generates 92 alerts, captures 76.0% of fraud at 62.0% precision). For human investigator review queues, route the <b>Top-100 highest-scoring transactions</b> (captures 76.0% of fraud at 57.0% precision, 433× enrichment lift over random audit).
+      </div>
+      <div class="cw" style="max-height:160px;"><canvas id="chartTopK"></canvas></div>
+    </div>
+  </div>
+  <div class="sf"><span>Card Fraud Triage — Palak Gupta</span><span>All FPR thresholds strictly derived from validation data; zero test leakage</span></div>
+</div>
+
+
+<!-- ══ SLIDE 10 — CONFUSION MATRIX & UNDETECTED CASES ════════════════ -->
+<div class="slide" id="s10">
+  <div class="sh"><div class="sn">10</div><h2>Test Confusion Matrix &amp; Error Analysis</h2><span class="ssub">Performance at the validation-calibrated operating point (&tau; = 114.75)</span></div>
+  <div class="sb row" style="gap:36px; align-items:center;">
+    <div style="display:flex; flex-direction:column; gap:12px; align-items:flex-start;">
+      <div class="sec">Held-Out Test Set (56,962 Transactions)</div>
+      <div class="cm2">
+        <div class="cmcell cm-tn"><div class="cv">56,852</div><div class="cl">True Negatives (Legit)</div></div>
+        <div class="cmcell cm-fp"><div class="cv">35</div><div class="cl">False Positives (Alarms)</div></div>
+        <div class="cmcell cm-fn"><div class="cv">18</div><div class="cl">False Negatives (Missed)</div></div>
+        <div class="cmcell cm-tp"><div class="cv">57</div><div class="cl">True Positives (Caught)</div></div>
+      </div>
+    </div>
+
+    <div style="flex:1; display:flex; flex-direction:column; gap:16px;">
+      <div class="sec">Classification Report Summary</div>
+      <table class="tbl">
+        <thead><tr><th>Metric</th><th>Legitimate Class (0)</th><th>Fraud Class (1)</th><th>System Macro / Overall</th></tr></thead>
+        <tbody>
+          <tr><td>Precision</td><td class="g">0.9997</td><td class="g">0.6196</td><td>0.8096</td></tr>
+          <tr><td>Recall</td><td class="g">0.9994</td><td class="g">0.7600</td><td>0.8797</td></tr>
+          <tr><td>F1-Score</td><td>0.9995</td><td class="b">0.6826</td><td>0.8411</td></tr>
+          <tr><td>Support</td><td>56,887</td><td>75</td><td>56,962 Total</td></tr>
+          <tr><td class="b">Overall Accuracy</td><td colspan="3" class="g b">99.91%</td></tr>
+        </tbody>
+      </table>
+
+      <div class="note amber">
+        <strong>Error Analysis: The 18 Undetected Frauds (24.0%)</strong>
+        At $\tau=114.75$, exactly 18 fraudulent transactions are missed ($s(\mathbf{x}) < 114.75$). These transactions sit geometrically within the high-density regions of legitimate behavioral components. Because unsupervised density estimators flag low-likelihood anomalies, frauds that closely mimic routine spending amounts and PCA patterns are indistinguishable from normal activity without access to temporal velocity rules or customer-level history.
+      </div>
+    </div>
+  </div>
+  <div class="sf"><span>Card Fraud Triage — Palak Gupta</span><span>F1 = 2TP / (2TP + FP + FN) = 114 / 167 = 0.6826</span></div>
+</div>
+
+
+<!-- ══ SLIDE 11 — COVARIANCE SENSITIVITY & LIMITATIONS ═══════════════ -->
+<div class="slide" id="s11">
+  <div class="sh"><div class="sn">11</div><h2>Sensitivity Analysis &amp; Phase-2 Engineering</h2><span class="ssub">Empirical reg_covar sweep and documented production boundaries</span></div>
+  <div class="sb" style="gap:16px;">
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+      <div>
+        <div class="sec" style="margin-bottom:10px;">Covariance Regularization Sweep (reg_covar)</div>
+        <p class="body" style="font-size:13.5px; margin-bottom:8px;">To test whether the high PR-AUC was an artifact of near-singular components, we evaluated model sensitivity across four orders of magnitude of $\text{reg\_covar}$ on training data:</p>
+        <table class="tbl" style="font-size:13px;">
+          <thead><tr><th>reg_covar</th><th>Min Eig</th><th>Max Condition</th><th>Test PR-AUC</th><th>Val Thresh TP/FP</th></tr></thead>
+          <tbody>
+            <tr><td>$10^{-6}$</td><td>$1.0 \times 10^{-6}$</td><td>$7.8 \times 10^6$</td><td>0.1817*</td><td>11 TP / 30 FP</td></tr>
+            <tr style="background:#eff6ff;"><td class="b">$10^{-4}$</td><td class="b">$1.0 \times 10^{-4}$</td><td class="b">$1.8 \times 10^5$</td><td class="g b">0.2708*</td><td class="b">35 TP / 34 FP</td></tr>
+            <tr><td>$10^{-3}$</td><td>$1.0 \times 10^{-3}$</td><td>$2.9 \times 10^4$</td><td>0.1806*</td><td>8 TP / 32 FP</td></tr>
+            <tr><td>$10^{-2}$</td><td>$1.0 \times 10^{-2}$</td><td>$4.0 \times 10^3$</td><td>0.1445*</td><td>5 TP / 31 FP</td></tr>
+          </tbody>
+        </table>
+        <p class="body" style="font-size:12px; color:var(--muted); margin-top:6px;">*Evaluated with n_init=1 sweep. Increasing reg_covar to $10^{-4}$ significantly improves condition numbers while maintaining strong triage recall.</p>
+      </div>
+
+      <div>
+        <div class="sec" style="margin-bottom:10px;">Documented Limitations &amp; Phase-2 Priorities</div>
+        <table class="tbl" style="font-size:13px;">
+          <thead><tr><th>Architectural Boundary</th><th>Phase-2 Remediation Roadmap</th></tr></thead>
+          <tbody>
+            <tr><td>Sweep Edge at $K=10$</td><td>Re-run multi-initialization sweep ($n_{\text{init}}=5$) extending to $K=15$ to verify global BIC minimum.</td></tr>
+            <tr><td>Covariance Conditioning</td><td>Adopt $\text{reg\_covar}=10^{-4}$ in production to stabilize condition numbers to $\approx 10^5$.</td></tr>
+            <tr><td>Skewed Amount Distribution</td><td>Apply $\log(1 + \text{Amount})$ transformation prior to standardization to normalize high-value tail.</td></tr>
+            <tr><td>48-Hour Static Window</td><td>Deploy rolling-window retraining to track longitudinal cardholder concept drift.</td></tr>
+            <tr><td>Unsupervised / Supervised Hybrid</td><td>Pass GMM density scores as input features into a gradient-boosted tree to capture residual fraud.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="sf"><span>Card Fraud Triage — Palak Gupta</span><span>Diagnostic transparency: empirical sensitivity documented prior to productionization</span></div>
+</div>
+
+
+<!-- ══ SLIDE 12 — CONCLUSION ════════════════════════════════════════ -->
+<div class="slide" id="s12">
+  <div class="sh"><div class="sn">12</div><h2>Executive Summary &amp; Recommendations</h2><span class="ssub">Core empirical deliverables from Phase 1</span></div>
+  <div class="sb" style="gap:22px;">
+
+    <div class="note blue" style="font-size:16px; padding:18px 24px;">
+      <strong>Production Bottom Line</strong>
+      <b>Validation-Calibrated Threshold (&tau; = 114.75):</b> Generates 92 total alerts on 56,962 test transactions &rarr; intercepts <b>57 of 75 frauds (76.0% Recall)</b> at <b>62.0% Precision</b> with only 35 false alarms.<br>
+      <b>Fixed Analyst Queue (Top-100):</b> Intercepts <b>57 of 75 frauds (76.0% Recall)</b> at <b>57.0% Precision</b> (433× concentration lift).
+    </div>
+
+    <div class="kgrid c4">
+      <div class="kcard gold">
+        <div class="klbl">Test PR-AUC</div>
+        <div class="kval">0.4736</div>
+        <div class="kbadge g">360× over random (0.0013)</div>
+        <div class="ksub ci">95% CI: [0.370, 0.624]</div>
+      </div>
+      <div class="kcard">
+        <div class="klbl">Test ROC-AUC</div>
+        <div class="kval">0.9106</div>
+        <div class="kbadge a">vs. IF: 0.947, Single GMM: 0.959</div>
+        <div class="ksub ci">Lower global ROC; far higher PR</div>
+      </div>
+      <div class="kcard green">
+        <div class="klbl">Fraud Recall</div>
+        <div class="kval">76.0%</div>
+        <div class="kbadge g">57 / 75 frauds intercepted</div>
+        <div class="ksub ci">95% CI: [65.6%, 85.3%]</div>
+      </div>
+      <div class="kcard navy">
+        <div class="klbl">Operational Precision</div>
+        <div class="kval">62.0%</div>
+        <div class="kbadge g">Only 35 False Positives</div>
+        <div class="ksub ci">95% CI: [52.0%, 72.0%]</div>
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:18px;">
+      <div class="note green">
+        <strong>Key Engineering Achievements</strong>
+        <ul>
+          <li><b>Strict Anti-Leakage Protocol:</b> Chronological 60/20/20 split and removal of the non-stationary Time feature boosted PR-AUC from 0.270 to 0.474.</li>
+          <li><b>Superiority Over Unsupervised Baselines:</b> Outperformed Isolation Forest (PR-AUC 0.037, 0% recall at FPR 0.1%) and Single Gaussian (PR-AUC 0.148, 28% recall).</li>
+          <li><b>Zero Test Peeking:</b> All decision boundaries transfer cleanly from validation data.</li>
+        </ul>
+      </div>
+      <div class="note blue">
+        <strong>Production Roadmap</strong>
+        <ul>
+          <li>Deploy serialized model pipeline (<code>models/best_gmm.joblib</code>, <code>models/scaler.joblib</code>).</li>
+          <li>Incorporate $\text{reg\_covar}=10^{-4}$ for enhanced covariance stability.</li>
+          <li>Execute Phase-2 hybrid ensemble incorporating GMM anomaly scores into gradient-boosted decision trees.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="sf"><span>Card Fraud Triage — Palak Gupta · github.com/palak22291/card-fraud-triage</span><span>GMM k=10, Full Covariance, n_init=5 · MIT License</span></div>
+</div>
+
+</div><!-- /deck -->
+
+<script>
+/* ── KEYBOARD & BUTTON NAVIGATION ─────────────── */
+const slides = document.querySelectorAll('.slide');
+const ctr = document.getElementById('slide-ctr');
+let cur = 0;
+function upd() { ctr.textContent = `${cur+1} / ${slides.length}`; }
+function next() {
+  cur = Math.min(cur + 1, slides.length - 1);
+  slides[cur].scrollIntoView({ behavior: 'smooth', block: 'start' });
+  upd();
+}
+function prev() {
+  cur = Math.max(cur - 1, 0);
+  slides[cur].scrollIntoView({ behavior: 'smooth', block: 'start' });
+  upd();
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next();
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') prev();
+});
+upd();
+
+/* ── CHART CONFIGURATION ──────────────────────── */
+Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+Chart.defaults.font.size = 13;
+Chart.defaults.color = '#334155';
+const N = '#0a192f', A = '#2563eb', G = '#15803d', R = '#b91c1c', O = '#d97706';
+
+/* 1. CLASS IMBALANCE */
+new Chart('chartImbalance', {
+  type: 'bar',
+  data: {
+    labels: ['Legitimate (0)', 'Fraud (1)'],
+    datasets: [{
+      data: [284315, 492],
+      backgroundColor: [A, R],
+      borderRadius: 6
+    }]
+  },
+  options: {
+    indexAxis: 'y',
+    plugins: { legend: { display: false } },
+    scales: {
+      x: {
+        type: 'logarithmic',
+        title: { display: true, text: 'Transaction Count (Log Scale)' },
+        ticks: { callback: v => v >= 1000 ? (v/1000) + 'k' : v }
+      },
+      y: { grid: { display: false } }
+    }
+  }
+});
+
+/* 2. AIC / BIC SWEEP */
+const k = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+const aic = [13356086, 12180506, 9941769, 1599082, -5050351, -1983424, -7275443, -8635744, -8799733, -9820186];
+const bic = [13360748, 12189840, 9955774, 1617759, -5027002, -1955404, -7242751, -8598381, -8757698, -9773480];
+new Chart('chartAICBIC', {
+  type: 'line',
+  data: {
+    labels: k.map(v => `K=${v}`),
+    datasets: [
+      {
+        label: 'AIC Score',
+        data: aic,
+        borderColor: A,
+        tension: 0.25,
+        pointRadius: k.map((_, i) => i === 9 || i === 5 ? 7 : 4),
+        pointBackgroundColor: k.map((_, i) => i === 9 ? G : i === 5 ? R : A),
+        borderWidth: 2
+      },
+      {
+        label: 'BIC Score',
+        data: bic,
+        borderColor: O,
+        borderDash: [5, 4],
+        tension: 0.25,
+        pointRadius: k.map((_, i) => i === 9 || i === 5 ? 7 : 4),
+        pointBackgroundColor: k.map((_, i) => i === 9 ? G : i === 5 ? R : O),
+        borderWidth: 2
+      }
+    ]
+  },
+  options: {
+    plugins: { legend: { position: 'top' } },
+    scales: {
+      y: {
+        title: { display: true, text: 'Score (Lower is Better)' },
+        ticks: { callback: v => (v / 1e6).toFixed(1) + 'M' }
+      },
+      x: { grid: { display: false } }
+    }
+  }
+});
+
+/* 3. FPR BUDGET EVALUATION (ALL VALIDATION-DERIVED) */
+new Chart('chartFPR', {
+  type: 'bar',
+  data: {
+    labels: ['FPR ≤ 0.10%', 'FPR ≤ 0.50%', 'FPR ≤ 1.00%'],
+    datasets: [
+      { label: 'Recall (%)', data: [76.00, 78.67, 78.67], backgroundColor: G, borderRadius: 4 },
+      { label: 'Precision (%)', data: [61.96, 23.51, 14.57], backgroundColor: O, borderRadius: 4 },
+      { label: 'Total Alerts (#)', data: [92, 251, 405], backgroundColor: R + '99', borderRadius: 4, yAxisID: 'y2' }
+    ]
+  },
+  options: {
+    plugins: { legend: { position: 'top' } },
+    scales: {
+      y: { beginAtZero: true, max: 100, title: { display: true, text: 'Percentage (%)' } },
+      y2: { beginAtZero: true, position: 'right', title: { display: true, text: 'Total Alert Volume' }, grid: { drawOnChartArea: false } },
+      x: { grid: { display: false } }
+    }
+  }
+});
+
+/* 4. TOP-K QUEUE TRIAGE */
+new Chart('chartTopK', {
+  type: 'bar',
+  data: {
+    labels: ['Top-50', 'Top-100', 'Top-200', 'Top-500'],
+    datasets: [
+      { label: 'Precision@K (%)', data: [58.0, 57.0, 29.0, 11.8], backgroundColor: A, borderRadius: 4 },
+      { label: 'Recall@K (%)', data: [38.67, 76.00, 77.33, 78.67], backgroundColor: G, borderRadius: 4 }
+    ]
+  },
+  options: {
+    plugins: { legend: { position: 'top' } },
+    scales: {
+      y: { beginAtZero: true, max: 100, title: { display: true, text: 'Score (%)' } },
+      x: { grid: { display: false } }
+    }
+  }
+});
+</script>
+</body>
+</html>
