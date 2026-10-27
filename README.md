@@ -27,11 +27,12 @@ This project implements a strictly **unsupervised density estimation and alert t
 | :--- | :---: | :--- |
 | **Test PR-AUC** | **0.4736** | **359.7x lift** over random baseline (`0.0013`) |
 | **Test ROC-AUC** | **0.9106** | Strong global ranking separation (`0.5000` baseline) |
-| **Recall @ FPR <= 0.1%** | **76.00%** | 57/75 frauds caught at **50.00% precision** (only 57 false alarms) |
+| **Recall @ FPR <= 0.1%** | **76.00%** | 57/75 frauds caught at **61.96% precision** (only 35 false alarms) |
 | **Recall @ FPR <= 0.5%** | **78.67%** | 59/75 frauds caught (285 false alarms across 56,887 legit txs) |
 | **Top-100 Alert Queue** | **57 / 75 Caught** | **57.00% Precision@100** & **76.00% Recall@100** (**432.9x lift**) |
 
 ---
+
 
 ## End-to-End Pipeline Architecture
 
@@ -148,9 +149,9 @@ In production payment processing, fraud rules are constrained by maximum allowab
 
 | FPR Budget | Actual Test FPR | Anomaly Score Cutoff | Fraud Caught (`TP`) | False Alarms (`FP`) | Recall | Precision |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **`<= 0.1%`** | `0.10%` | `114.75` | `35 / 75` | `35` | **76.00%** | **61.96%** |
-| **`<= 0.5%`** | `0.50%` | `63.52` | `59 / 75` | `285` | **78.67%** | **17.15%** |
-| **`<= 1.0%`** | `1.00%` | `55.55` | `59 / 75` | `569` | **78.67%** | **9.39%** |
+| **`<= 0.1%`** | `0.062%` | `114.62` | `57 / 75` | `35` | **76.00%** | **61.96%** |
+| **`<= 0.5%`** | `0.338%` | `68.72` | `59 / 75` | `192` | **78.67%** | **23.51%** |
+| **`<= 1.0%`** | `0.608%` | `60.69` | `59 / 75` | `346` | **78.67%** | **14.57%** |
 
 ### 2. Analyst Alert Queue Triage (`Precision@K` & `Recall@K`)
 When fraud operations teams review a fixed daily capacity of the top $K$ highest-scoring alerts:
