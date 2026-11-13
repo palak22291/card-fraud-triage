@@ -3,6 +3,7 @@
 \usepackage{booktabs,float,graphicx,url}
 \usepackage[hidelinks]{hyperref}
 \graphicspath{{figures/}}
+\setlength{\intextsep}{6pt plus 2pt minus 1pt}
 
 \begin{document}
 \title{Card Fraud Triage with Gaussian Mixtures and Deep Autoencoders}
@@ -109,11 +110,15 @@ Under the tightest validation FPR budget, GMM reaches 76.0\% recall and 61.96\% 
 \input{tables/queues}
 
 \section{Error Analysis and Conclusion}
-At the 0.10\% validation budget, the models catch 22 frauds in common and GMM catches 35 additional frauds. In Top~100 the counts are 35 and 22. Both rules miss the same 18 cases and neither produces an AE-only hit (Table~\ref{tab:overlap}). The GMM-only cases have more negative median V14, V17 and V12 than shared misses at both operating rules (Table~\ref{tab:profiles}). Median Amount for GMM-only hits is 10.70 at the cutoff and 7.13 in the queue, versus 7.80 for shared misses, with overlapping interquartile ranges. The executed notebook lists the complete row indices and interquartile ranges for each group.
+At the 0.10\% validation budget, the models catch 22 frauds in common and GMM catches 35 additional frauds. In Top~100 the counts are 35 and 22. Both rules miss the same 18 cases and neither produces an AE-only hit (Table~\ref{tab:overlap}). The GMM-only cases have more negative median V14, V17 and V12 than shared misses at both operating rules (Table~\ref{tab:profiles}). Median Amount for GMM-only hits is 10.70 at the cutoff and 7.13 in the queue, versus 7.80 for shared misses, with overlapping interquartile ranges. Table~\ref{tab:indices} lists the exact test row positions.
 \input{tables/overlap}
 \input{tables/profiles}
 
 On this time window, GMM yielded the strongest short-queue ranking and the validation-selected blend added no AE weight. The AE representation showed stronger intrinsic cluster geometry and a higher ROC-AUC. The contrast illustrates why ranking and review-budget metrics are needed alongside geometry. These findings come from one benchmark, one saved fit per method, and 75 held-out frauds. Calibration limits false alerts in validation, and realized false-positive rates can shift in future time windows.
+
+\appendix
+\section*{Fraud Row Positions}
+\input{tables/indices}
 
 \begin{thebibliography}{00}
 \bibitem{dalpozzolo}
