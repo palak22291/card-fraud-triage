@@ -1,0 +1,20 @@
+\begin{table}[H]
+\centering\footnotesize\setlength{\tabcolsep}{3pt}
+\caption{Median raw features by fraud detection group. An em dash denotes an empty group.}
+\label{tab:profiles}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{llrrrrr}
+\toprule
+Rule & Group & $n$ & Amount & V14 & V17 & V12 \\
+\midrule
+Val FPR 0.10\% & Both & 22 & 1.00 & -11.93 & -5.73 & -6.40 \\
+Val FPR 0.10\% & GMM only & 35 & 10.70 & -6.28 & -2.52 & -3.81 \\
+Val FPR 0.10\% & AE only & 0 & --- & --- & --- & --- \\
+Val FPR 0.10\% & Missed by both & 18 & 7.79 & -1.89 & 1.33 & -0.17 \\
+Top 100 & Both & 35 & 1.00 & -9.15 & -5.13 & -6.12 \\
+Top 100 & GMM only & 22 & 7.13 & -5.94 & -1.80 & -3.12 \\
+Top 100 & AE only & 0 & --- & --- & --- & --- \\
+Top 100 & Missed by both & 18 & 7.79 & -1.89 & 1.33 & -0.17 \\
+\bottomrule
+\end{tabular}}
+\end{table}

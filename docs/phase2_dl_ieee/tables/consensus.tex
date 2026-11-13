@@ -1,0 +1,15 @@
+\begin{table}[H]
+\centering\footnotesize\setlength{\tabcolsep}{3pt}
+\caption{Training-quantile pseudo-label agreement. Cutoffs come from scores on deduplicated legitimate training rows. Alert counts and agreement use test.}
+\label{tab:consensus}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lrrrrrrrr}
+\toprule
+Quantile & GMM cut & AE cut & GMM & AE & Both & $\kappa$ & Jaccard & Spear. $\rho$ \\
+\midrule
+99.0\% & 52.056 & 1.4322 & 880 & 854 & 495 & 0.5643 & 0.3995 & 0.5049 \\
+99.5\% & 57.504 & 2.0401 & 530 & 397 & 283 & 0.6074 & 0.4394 & 0.5049 \\
+99.9\% & 86.735 & 5.8213 & 120 & 88 & 72 & 0.6918 & 0.5294 & 0.5049 \\
+\bottomrule
+\end{tabular}}
+\end{table}

@@ -1,0 +1,126 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs,float,graphicx,url}
+\usepackage[hidelinks]{hyperref}
+\graphicspath{{figures/}}
+
+\begin{document}
+\title{Card Fraud Triage with Gaussian Mixtures and Deep Autoencoders}
+\author{\IEEEauthorblockN{Palak Gupta \qquad Pratyush Parida (2401010351)}
+\IEEEauthorblockA{Team ID T110}}
+\maketitle
+\raggedbottom
+
+\begin{abstract}
+Fraud triage requires rankings that surface rare frauds under limited review capacity. We compare a full-covariance Gaussian mixture model (GMM), a 12-dimensional autoencoder (AE), and a validation-selected blend on 56,962 chronologically held-out transactions containing 75 frauds. The base models are fitted on legitimate transactions. The AE uses deduplicated training features. The GMM achieves average precision of 0.4833 versus 0.2453 for the AE, while the AE leads in ROC-AUC (0.9274 versus 0.9106). Validation average precision selects a GMM weight of 1.00, so the blend reproduces the GMM ranking. At a validation false-positive budget of 0.10\%, the GMM detects 57 frauds with 35 false alerts, and the AE detects 22 with 30 false alerts. Every AE hit is also a GMM hit at that cutoff and in the first 100 reviews.
+\end{abstract}
+
+\begin{IEEEkeywords}
+card fraud, anomaly detection, Gaussian mixture models, autoencoders, alert triage, average precision
+\end{IEEEkeywords}
+
+\section{Introduction and Operational Constraints}
+The European card transaction benchmark contains 492 frauds among 284,807 transactions \cite{dalpozzolo}. Analysts can inspect only a fraction of alerts. A ranking can discriminate well over the full score range while returning too many false alerts near its head. We therefore report average precision (AP), ROC-AUC, recall and precision under fixed false-positive budgets, and precision and recall under fixed queue sizes. The held-out window contains 75 frauds, so one recovered fraud changes recall by about 1.33 percentage points.
+
+\section{Related Work}
+Dal Pozzolo \emph{et al.} \cite{dalpozzolo} use an imbalanced card dataset to study how undersampling changes the class prior and biases predicted probabilities. A prior correction can change calibration while preserving the ordering. We preserve the observed class proportions in validation and test and interpret detector outputs as anomaly scores. Dempster \emph{et al.} \cite{dempster} describe expectation-maximization (EM) for latent assignments, including finite mixtures. Sakurada and Yairi \cite{sakurada} compare nonlinear autoencoder reconstruction error against linear and kernel PCA on simulated dynamics and spacecraft telemetry. We apply reconstruction error to card transaction features and compare it with mixture likelihood under a review budget.
+
+\section{Anti-Leakage Data Pipeline and Duplicate Audit}
+A stable sort on elapsed \texttt{Time} precedes a chronological 60/20/20 split. Training uses only legitimate rows. We drop \texttt{Time} after splitting because elapsed time would expose a non-overlapping range at deployment. The 29 scoring features are the supplied PCA components V1--V28 and Amount. The Phase~1 scaler and GMM use the original 170,524 legitimate training rows. Phase~2 removes 5,245 repeated 29-feature vectors (3.076\%), leaving 165,279 rows for the AE and its scaler. Repeated feature vectors can overweight recurring patterns in the training loss. Validation (56,961 rows, 57 frauds) and test retain all arrivals.
+
+In the 8-dimensional ablation, legitimate validation MSE decreased from 0.5953 to 0.5929 (Table~\ref{tab:ablation}). Each training partition has its own standardization, so the observed change reflects both altered sample weights and scaling. It is a single-run comparison, and validation AP in this ablation fell from 0.0745 to 0.0683.
+
+\input{tables/ablation}
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.37\textwidth]{ae_convergence.png}\hfill
+\includegraphics[width=0.60\textwidth]{ae_attribution.png}
+\caption{Saved training-notebook outputs. Left, standard 12D AE loss by epoch. Right, the ten features with highest mean squared reconstruction error on test frauds.}
+\label{fig:ae}
+\end{figure*}
+
+\section{Comparative Methodology}
+\subsection{Full-covariance Gaussian mixture}
+For standardized input $x\in\mathbb R^{D}$, $D=29$, the GMM is
+\begin{align}
+p(x)&=\sum_{k=1}^{K}\pi_k\mathcal N(x;\mu_k,\Sigma_k), \quad K=10,\\
+\mathcal N(x;\mu,\Sigma)
+&=\frac{\exp[-(x-\mu)^\top\Sigma^{-1}(x-\mu)/2]}
+        {(2\pi)^{D/2}|\Sigma|^{1/2}},
+\end{align}
+where $\pi_k\ge0$ and $\sum_k\pi_k=1$. EM estimates latent responsibilities with the current parameters,
+\begin{equation}
+r_{ik}=\frac{\pi_k\mathcal N(x_i;\mu_k,\Sigma_k)}
+{\sum_j\pi_j\mathcal N(x_i;\mu_j,\Sigma_j)}.
+\end{equation}
+For $N$ training rows, the update with covariance regularization is
+\begin{align}
+N_k &= \sum_i r_{ik}, \qquad \pi_k^{+}=N_k/N,\\
+\mu_k^{+} &= N_k^{-1}\sum_i r_{ik}x_i,\\
+\Sigma_k^{+} &= N_k^{-1}\sum_i r_{ik}(x_i-\mu_k^{+})
+                     (x_i-\mu_k^{+})^\top + \lambda I .
+\end{align}
+The saved fit uses five initializations and $\lambda=10^{-6}$. Its score is $s_G(x)=-\log p(x)$.
+
+\subsection{Nonlinear autoencoder}
+The standard AE uses widths $29\to22\to14\to12\to14\to22\to29$. Hidden blocks use batch normalization and LeakyReLU (slope 0.1), with dropout of 0.10 after the first hidden block of each half. The bottleneck and reconstruction layers have linear outputs. For encoder $f_\theta$ and decoder $g_\phi$, training minimizes
+\begin{equation}
+\mathcal L(\theta,\phi)=\frac{1}{ND}\sum_{i=1}^N
+\|x_i-g_\phi(f_\theta(\tilde x_i))\|_2^2 .
+\end{equation}
+For standard training, $\tilde x_i=x_i$. Denoising runs add independent Gaussian noise with standard deviation 0.05 in standardized input units. At inference, the clean standardized input gives the anomaly score
+$s_A(x)=D^{-1}\|x-g_\phi(f_\theta(x))\|_2^2$.
+We use the saved 12-dimensional standard AE, which led the sweep on validation AP. The sweep trained with AdamW and early stopping on legitimate validation MSE.
+
+\subsection{Score fusion and triage}
+We fit means $\mu_m$ and population standard deviations $\sigma_m$ on all validation scores for each detector $m$. The blend is
+\begin{equation}
+s_H(x)=\alpha\,\frac{s_G(x)-\mu_G}{\sigma_G}
++(1-\alpha)\,\frac{s_A(x)-\mu_A}{\sigma_A}.
+\end{equation}
+We select $\alpha$ by validation AP from $\{0,0.25,0.50,0.75,1\}$. The base fits use legitimate training data. Validation labels enter blend selection and identify legitimate validation rows for FPR calibration.
+
+For target FPR $q$, sort the $N_0=56{,}904$ legitimate validation scores in descending order and flag scores strictly greater than the first excluded score, at rank $\lfloor q N_0\rfloor+1$. This limits validation false positives to $\lfloor q N_0\rfloor$ even with tied scores. We freeze the cutoff before scoring test. For fixed queues, we rank the test stream by descending score and use CSV order to break ties.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.97\textwidth]{test_curves.pdf}
+\caption{Held-out precision--recall and ROC curves. The hybrid overlaps the GMM because the validation sweep selects $\alpha=1$. The PR reference is test fraud prevalence (75/56,962).}
+\label{fig:curves}
+\end{figure*}
+
+\section{Unsupervised Manifold Evaluation and Triage Results}
+Table~\ref{tab:sweep} compares bottlenecks and denoising variants. The 12-dimensional standard AE has the lowest legitimate validation MSE (0.4860) and highest validation AP (0.1222). The 16-dimensional model reconstructs the training sample more closely but gives higher validation MSE. Fig.~\ref{fig:ae} shows the original convergence and attribution plots. V14 and V17 exhibit fraud-to-legitimate mean squared reconstruction error ratios of 123.28 and 137.34 (Table~\ref{tab:attribution}). These PCA coordinates localize reconstruction error.
+\input{tables/sweep}
+\input{tables/attribution}
+
+The geometry audit compares hard GMM assignments in standardized 29-dimensional space with 10-cluster $k$-means assignments in the 12-dimensional latent space. The metrics use a seeded sample of 10,000 test rows and no fraud labels. The latent representation gives higher Silhouette and Calinski--Harabasz and lower Davies--Bouldin values (Table~\ref{tab:geometry}). The clustering algorithm also changes, so the comparison does not isolate the effect of representation. The pseudo-label agreement experiment (Tables~\ref{tab:consensus} and~\ref{tab:pseudo}) applies training score quantiles to test. It is a distinct protocol from the validation false-positive budgets.
+\input{tables/geometry}
+\input{tables/consensus}
+\input{tables/pseudo}
+
+Table~\ref{tab:blend} shows the validation sweep. At $\alpha=1$, the hybrid is the GMM score under positive affine rescaling, which leaves rankings and corresponding alert decisions unchanged. On test (Table~\ref{tab:ranking} and Fig.~\ref{fig:curves}), GMM leads on AP and AE leads on ROC-AUC. Phase~1 reported trapezoidal PR area of 0.4736 for GMM. Here we use scikit-learn's non-interpolated AP, which weights precision by increments in recall.
+\input{tables/blend}
+\input{tables/ranking}
+
+Under the tightest validation FPR budget, GMM reaches 76.0\% recall and 61.96\% precision. AE reaches 29.33\% recall and 42.31\% precision. At the 0.50\% budget, the AE has higher precision and lower recall than GMM. Their realized test FPRs differ, so Table~\ref{tab:operating} includes both the target and realized rate. In equal-size queues, GMM leads at $K=50,100,200$ and ties the AE at $K=500$, where each retrieves 59 frauds (Table~\ref{tab:queues}).
+\input{tables/operating}
+\input{tables/queues}
+
+\section{Error Analysis and Conclusion}
+At the 0.10\% validation budget, the models catch 22 frauds in common and GMM catches 35 additional frauds. In Top~100 the counts are 35 and 22. Both rules miss the same 18 cases and neither produces an AE-only hit (Table~\ref{tab:overlap}). The GMM-only cases have more negative median V14, V17 and V12 than shared misses at both operating rules (Table~\ref{tab:profiles}). Median Amount for GMM-only hits is 10.70 at the cutoff and 7.13 in the queue, versus 7.80 for shared misses, with overlapping interquartile ranges. The executed notebook lists the complete row indices and interquartile ranges for each group.
+\input{tables/overlap}
+\input{tables/profiles}
+
+On this time window, GMM yielded the strongest short-queue ranking and the validation-selected blend added no AE weight. The AE representation showed stronger intrinsic cluster geometry and a higher ROC-AUC. The contrast illustrates why ranking and review-budget metrics are needed alongside geometry. These findings come from one benchmark, one saved fit per method, and 75 held-out frauds. Calibration limits false alerts in validation, and realized false-positive rates can shift in future time windows.
+
+\begin{thebibliography}{00}
+\bibitem{dalpozzolo}
+A. Dal Pozzolo, O. Caelen, R. A. Johnson, and G. Bontempi, \emph{Calibrating probability with undersampling for unbalanced classification}, in Proc. IEEE Symp. Series Comput. Intell., 2015, pp. 159--166. \href{https://www3.nd.edu/~dial/publications/dalpozzolo2015calibrating.pdf}{Paper}.
+\bibitem{dempster}
+A. P. Dempster, N. M. Laird, and D. B. Rubin, \emph{Maximum likelihood from incomplete data via the EM algorithm}, J. Roy. Stat. Soc. B, vol. 39, no. 1, pp. 1--38, 1977. \href{https://doi.org/10.1111/j.2517-6161.1977.tb01600.x}{DOI}.
+\bibitem{sakurada}
+M. Sakurada and T. Yairi, \emph{Anomaly detection using autoencoders with nonlinear dimensionality reduction}, in Proc. 2nd Workshop Mach. Learn. Sensory Data Anal., 2014, pp. 4--11. \href{https://doi.org/10.1145/2689746.2689747}{DOI}.
+\end{thebibliography}
+\end{document}

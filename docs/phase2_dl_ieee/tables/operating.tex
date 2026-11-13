@@ -1,0 +1,21 @@
+\begin{table}[H]
+\centering\footnotesize\setlength{\tabcolsep}{3pt}
+\caption{Validation-only cutoffs and realized test triage. Each model flags 56, 284 and 569 legitimate validation rows at the respective budgets (0.0984\%, 0.4991\%, 0.9999\%).}
+\label{tab:operating}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lrrrrrrr}
+\toprule
+Model & Val (\%) & Cutoff & TP & FP & FPR (\%) & Recall (\%) & Prec. (\%) \\
+\midrule
+GMM & 0.10 & 114.749583 & 57 & 35 & 0.0615 & 76.00 & 61.96 \\
+GMM & 0.50 & 68.723566 & 59 & 192 & 0.3375 & 78.67 & 23.51 \\
+GMM & 1.00 & 60.692267 & 59 & 346 & 0.6082 & 78.67 & 14.57 \\
+AE & 0.10 & 9.780338 & 22 & 30 & 0.0527 & 29.33 & 42.31 \\
+AE & 0.50 & 3.057487 & 53 & 141 & 0.2479 & 70.67 & 27.32 \\
+AE & 1.00 & 2.016608 & 55 & 346 & 0.6082 & 73.33 & 13.72 \\
+Hybrid & 0.10 & 0.983374 & 57 & 35 & 0.0615 & 76.00 & 61.96 \\
+Hybrid & 0.50 & 0.665640 & 59 & 192 & 0.3375 & 78.67 & 23.51 \\
+Hybrid & 1.00 & 0.610197 & 59 & 346 & 0.6082 & 78.67 & 14.57 \\
+\bottomrule
+\end{tabular}}
+\end{table}

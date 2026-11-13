@@ -1,0 +1,18 @@
+\begin{table}[H]
+\centering\footnotesize\setlength{\tabcolsep}{3pt}
+\caption{Bottleneck sweep. MSE uses legitimate rows. The 99\% cutoff uses the training split.}
+\label{tab:sweep}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lrrrrrrrr}
+\toprule
+Model & $d$ & Noise & Params & Train MSE & Val MSE & Cutoff & Val AP & Val ROC \\
+\midrule
+AE & 4 & 0.00 & 2,253 & 0.4907 & 0.7418 & 2.3849 & 0.0478 & 0.9357 \\
+AE & 8 & 0.00 & 2,369 & 0.3506 & 0.5929 & 1.7452 & 0.0683 & 0.9449 \\
+AE & 12 & 0.00 & 2,485 & 0.2967 & 0.4860 & 1.4322 & 0.1222 & 0.9467 \\
+AE & 16 & 0.00 & 2,601 & 0.2884 & 0.5121 & 1.5165 & 0.0785 & 0.9415 \\
+DAE & 8 & 0.05 & 2,369 & 0.3654 & 0.6070 & 1.8661 & 0.0616 & 0.9369 \\
+DAE & 12 & 0.05 & 2,485 & 0.3068 & 0.5405 & 1.4879 & 0.0846 & 0.9531 \\
+\bottomrule
+\end{tabular}}
+\end{table}

@@ -1,0 +1,13 @@
+\begin{table}[H]
+\centering\footnotesize\setlength{\tabcolsep}{3pt}
+\caption{Duplicate ablation (8D AE). The 99\% cutoff is derived from the respective legitimate training scores.}
+\label{tab:ablation}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Train set & Train MSE & Val MSE & Cutoff & Val AP & Val ROC \\
+\midrule
+Full & .3471 & .5953 & 1.7199 & .0745 & .9445 \\
+Dedup. & .3506 & .5929 & 1.7452 & .0683 & .9449 \\
+\bottomrule
+\end{tabular}
+\end{table}
