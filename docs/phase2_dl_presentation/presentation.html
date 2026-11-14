@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Card Fraud Triage · Phase 2</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --navy: #0a192f;
+  --blue: #1e3a8a;
+  --accent: #2563eb;
+  --gold: #d97706;
+  --red: #b91c1c;
+  --green: #15803d;
+  --light: #f8fafc;
+  --slate: #e2e8f0;
+  --muted: #475569;
+  --white: #ffffff;
+  --border: #cbd5e1;
+  --text: #0f172a;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0f172a;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 0 60px;
+}
+
+/* TOP NAVIGATION */
+#nav {
+  position: fixed; top: 0; left: 0; right: 0;
+  background: rgba(10, 25, 47, 0.95);
+  backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 28px; z-index: 999;
+  font-size: 14px; color: #94a3b8;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+#nav .ntitle { font-weight: 700; color: #f8fafc; font-size: 15px; }
+#nav .nctrl { display: flex; align-items: center; gap: 12px; }
+#nav button {
+  background: #1e293b; color: #f8fafc; border: 1px solid #334155;
+  border-radius: 6px; padding: 6px 16px; cursor: pointer; font-size: 14px; font-weight: 600;
+  transition: all 0.15s ease;
+}
+#nav button:hover { background: var(--accent); border-color: var(--accent); }
+#slide-ctr { min-width: 70px; text-align: center; color: #cbd5e1; font-weight: 600; }
+
+/* SLIDE DECK WRAPPER */
+#deck {
+  margin-top: 56px; width: 100%; display: flex; flex-direction: column;
+  align-items: center; gap: 32px; padding: 20px 0;
+}
+
+.slide {
+  width: 1280px; min-height: 720px; background: var(--white);
+  border-radius: 12px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.4);
+  display: flex; flex-direction: column; scroll-margin-top: 68px;
+}
+
+/* HEADER */
+.sh {
+  background: var(--navy); color: #fff; padding: 20px 48px; display: flex;
+  align-items: center; gap: 16px; min-height: 72px; flex-shrink: 0;
+}
+.sh .sn {
+  background: var(--accent); color: #fff; width: 30px; height: 30px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 800; flex-shrink: 0;
+}
+.sh h2 { font-size: 23px; font-weight: 700; letter-spacing: -0.01em; }
+.sh .ssub { font-size: 14px; color: #93c5fd; margin-left: auto; font-style: italic; }
+
+/* BODY */
+.sb { flex: 1; padding: 32px 48px; display: flex; flex-direction: column; gap: 22px; }
+.sb.row { flex-direction: row; gap: 32px; }
+.sb.row > * { flex: 1; }
+
+/* FOOTER */
+.sf {
+  padding: 10px 48px; background: var(--light); border-top: 1px solid var(--border);
+  display: flex; justify-content: space-between; font-size: 12px; color: var(--muted);
+  font-weight: 500; flex-shrink: 0;
+}
+
+/* TYPOGRAPHY & BLOCKS */
+.sec {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--blue);
+  font-weight: 800; border-left: 4px solid var(--accent); padding-left: 10px;
+}
+p.body { font-size: 15px; color: var(--text); line-height: 1.65; }
+
+/* TABLES */
+.tbl { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+.tbl th {
+  background: var(--navy); color: #fff; padding: 11px 14px; text-align: left;
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700;
+}
+.tbl td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text); }
+.tbl tr:nth-child(even) td { background: var(--light); }
+.tbl td.b { font-weight: 700; color: var(--navy); }
+.tbl td.g { color: var(--green); font-weight: 700; }
+.tbl td.r { color: var(--red); font-weight: 700; }
+.tbl td.a { color: var(--gold); font-weight: 700; }
+
+/* CALLOUT NOTES */
+.note { border-radius: 0 8px 8px 0; padding: 14px 18px; font-size: 14.5px; line-height: 1.6; }
+.note.blue { background: #eff6ff; border-left: 4px solid var(--accent); color: #1e3a8a; }
+.note.green { background: #f0fdf4; border-left: 4px solid var(--green); color: #14532d; }
+.note.amber { background: #fffbeb; border-left: 4px solid var(--gold); color: #78350f; }
+.note.red { background: #fef2f2; border-left: 4px solid var(--red); color: #7f1d1d; }
+.note strong { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 4px; font-weight: 800; }
+
+/* FLOW DIAGRAM */
+.flow { display: flex; align-items: stretch; gap: 8px; }
+.fstep {
+  flex: 1; background: var(--light); border: 1px solid var(--border); border-radius: 8px;
+  padding: 16px 12px; text-align: center; display: flex; flex-direction: column;
+  align-items: center; gap: 6px;
+}
+.fstep.hi { background: #eff6ff; border-color: var(--accent); }
+.fstep .ft { font-size: 14px; font-weight: 700; color: var(--navy); }
+.fstep .fs { font-size: 12px; color: var(--muted); line-height: 1.45; }
+.farr { display: flex; align-items: center; padding: 0 4px; color: var(--accent); font-size: 20px; font-weight: 800; flex-shrink: 0; }
+
+/* CHARTS & CONFUSION MATRIX */
+.cw { position: relative; width: 100%; flex: 1; min-height: 200px; }
+@media(max-width: 1300px) { .slide { width: 98vw; } }
+
+.phase2 .sb { padding: 34px 48px; min-width: 0; }
+.phase2 .tbl { font-size: 18px; }
+.phase2 .tbl th { font-size: 13px; }
+.phase2 .tbl td { padding: 9px 14px; }
+.phase2 p.body { font-size: 18px; line-height: 1.45; }
+.phase2 .sec { font-size: 14px; }
+.phase2 .note { font-size: 17px; }
+.phase2 .fstep { justify-content: center; min-height: 124px; }
+.phase2 .fstep .ft { font-size: 30px; }
+.phase2 .fstep .fs { font-size: 14px; }
+.phase2 .analysis { width: 100%; max-height: 465px; object-fit: contain; }
+.phase2 .cw { flex: 0 0 auto; width: min(100%, 900px); height: 355px; min-height: 0; align-self: center; }
+.phase2 .split { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+.phase2 .split section { display: flex; flex-direction: column; gap: 13px; }
+@page { size: 13.333333in 7.5in; margin: 0; }
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body, #deck { display: block; margin: 0; padding: 0; background: white; }
+  #nav { display: none; }
+  .slide { width: 1280px; height: 720px; min-height: 0; box-shadow: none; border-radius: 0; break-after: page; }
+  .slide:last-child { break-after: auto; }
+}
+</style>
+</head>
+<body>
+<nav id="nav" aria-label="Presentation controls">
+  <span class="ntitle">Card Fraud Triage · Phase 2</span>
+  <div class="nctrl"><button onclick="go(-1)">Previous</button><span id="slide-ctr">1 / 8</span><button onclick="go(1)">Next</button></div>
+</nav>
+<main id="deck">
+<article class="slide phase2" id="s13">
+  <header class="sh"><span class="sn">13</span><h2>Phase 2 autoencoder architecture</h2></header>
+  <div class="sb">
+  <div class="sec">Layer widths</div>
+  <div class="flow"><div class="fstep"><span class="ft">29</span><span class="fs">Input features</span></div><span class="farr" aria-hidden="true">→</span><div class="fstep"><span class="ft">22</span><span class="fs">Encoder</span></div><span class="farr" aria-hidden="true">→</span><div class="fstep"><span class="ft">14</span><span class="fs">Encoder</span></div><span class="farr" aria-hidden="true">→</span><div class="fstep hi"><span class="ft">12</span><span class="fs">Bottleneck</span></div><span class="farr" aria-hidden="true">→</span><div class="fstep"><span class="ft">14</span><span class="fs">Decoder</span></div><span class="farr" aria-hidden="true">→</span><div class="fstep"><span class="ft">22</span><span class="fs">Decoder</span></div><span class="farr" aria-hidden="true">→</span><div class="fstep"><span class="ft">29</span><span class="fs">Reconstruction</span></div></div>
+  <div class="split">
+    <section><h3>Training data</h3><p class="body">Deduplicate legitimate training rows before fitting the AE scaler. Removing 5,245 repeated feature vectors leaves 165,279 rows.</p></section>
+    <section><h3>Anomaly score</h3><p class="body">Average the squared difference between input and reconstruction across the 29 standardized features.</p></section>
+  </div>
+  <div class="note blue">The 8D duplicate ablation reduced legitimate validation MSE from <b>0.5953 to 0.5929</b>.</div>
+</div>
+  <footer class="sf"><span>Card Fraud Triage · Team T110</span><span>Notebook 1 · Duplicate ablation and training</span></footer>
+</article>
+
+<article class="slide phase2" id="s14">
+  <header class="sh"><span class="sn">14</span><h2>Bottleneck width and validation performance</h2></header>
+  <div class="sb">
+  <div class="cw"><canvas id="bottleneck" role="img" aria-label="Validation MSE and average precision across bottleneck dimensions"></canvas></div>
+  <p class="body">The 12D standard model led on validation average precision (0.1222) and had the lowest legitimate validation MSE (0.4860). The 16D model had lower training MSE.</p>
+  <p class="body">Adding Gaussian noise with standard deviation 0.05 lowered validation AP at both tested widths, 8D and 12D.</p>
+</div>
+  <footer class="sf"><span>Card Fraud Triage · Team T110</span><span>Notebook 1 · Bottleneck and denoising sweep</span></footer>
+</article>
+
+<article class="slide phase2" id="s15">
+  <header class="sh"><span class="sn">15</span><h2>V14 and V17 reconstruction error</h2></header>
+  <div class="sb">
+  <div class="cw"><canvas id="attribution" role="img" aria-label="Mean squared reconstruction errors for test frauds and legitimate rows"></canvas></div>
+  <p class="body">Mean squared error on test frauds was <b>123.28×</b> the legitimate error on V14 and <b>137.34×</b> on V17. V12 followed those features in mean squared fraud error.</p>
+  <p class="body">The attributions identify which PCA coordinates contribute to the reconstruction score.</p>
+</div>
+  <footer class="sf"><span>Card Fraud Triage · Team T110</span><span>Notebook 1 · Held-out feature attribution</span></footer>
+</article>
+
+<article class="slide phase2" id="s16">
+  <header class="sh"><span class="sn">16</span><h2>Latent-space geometry and pseudo-labels</h2></header>
+  <div class="sb">
+  <div class="sec">Intrinsic geometry on 10,000 unlabeled test rows</div>
+  <table class="tbl"><thead><tr><th>Representation / assignments</th><th>Silhouette ↑</th><th>Davies–Bouldin ↓</th><th>Calinski–Harabasz ↑</th></tr></thead><tbody>
+<tr><td>29D features / GMM</td><td>0.0364</td><td>4.4603</td><td>168.82</td></tr>
+<tr><td>12D latent space / k-means</td><td>0.1836</td><td>1.5472</td><td>1048.19</td></tr></tbody></table>
+  <p class="body">The AE bottleneck yielded more compact, separated clusters in this comparison. The assignment method also changed.</p>
+  <div class="sec">Test audit of train-quantile pseudo-labels</div>
+  <table class="tbl"><thead><tr><th>99.9% training-quantile rule</th><th>Test alerts</th><th>Test frauds caught</th><th>Precision</th><th>Recall</th></tr></thead><tbody>
+<tr><td>GMM</td><td>120</td><td>57</td><td>47.50%</td><td>76.00%</td></tr>
+<tr><td>AE</td><td>88</td><td>34</td><td>38.64%</td><td>45.33%</td></tr>
+<tr><td>Both</td><td>72</td><td>34</td><td>47.22%</td><td>45.33%</td></tr></tbody></table>
+  <p class="body">At the 99.9th percentile, Cohen’s κ was 0.6918 across model flags.</p>
+</div>
+  <footer class="sf"><span>Card Fraud Triage · Team T110</span><span>Notebook 2 · Intrinsic evaluation and post-hoc audit</span></footer>
+</article>
+
+<article class="slide phase2" id="s17">
+  <header class="sh"><span class="sn">17</span><h2>Validation selects the GMM endpoint</h2></header>
+  <div class="sb">
+  <div class="split">
+    <section><div class="sec">Validation weight sweep</div><table class="tbl"><thead><tr><th>GMM weight α</th><th>Validation AP</th><th>Validation ROC-AUC</th></tr></thead><tbody>
+<tr><td>0.00</td><td>0.1222</td><td>0.9467</td></tr>
+<tr><td>0.25</td><td>0.1550</td><td>0.9476</td></tr>
+<tr><td>0.50</td><td>0.1842</td><td>0.9458</td></tr>
+<tr><td>0.75</td><td>0.2437</td><td>0.9402</td></tr>
+<tr><td>1.00</td><td>0.4782</td><td>0.9351</td></tr></tbody></table></section>
+    <section><div class="sec">Held-out ranking</div><table class="tbl"><thead><tr><th>Model</th><th>Test AP</th><th>Test ROC-AUC</th></tr></thead><tbody>
+<tr><td>GMM</td><td>0.4833</td><td>0.9106</td></tr>
+<tr><td>AE</td><td>0.2453</td><td>0.9274</td></tr>
+<tr><td>Hybrid</td><td>0.4833</td><td>0.9106</td></tr></tbody></table>
+      <p class="body">The AE has higher ROC-AUC. GMM has higher average precision.</p>
+    </section>
+  </div>
+  <div class="note blue">Fit score z-scaling on validation and select α by validation AP. At α = 1.00 the hybrid gives the same ranks and triage decisions as GMM.</div>
+</div>
+  <footer class="sf"><span>Card Fraud Triage · Team T110</span><span>Notebook 3 · Validation selection and held-out ranking</span></footer>
+</article>
+
+<article class="slide phase2" id="s18">
+  <header class="sh"><span class="sn">18</span><h2>Held-out precision–recall and ROC</h2></header>
+  <div class="sb">
+  <img class="analysis" src="figures/test-curves.png" alt="Precision-recall and ROC curves for GMM, AE and the selected hybrid">
+  <p class="body">The dotted hybrid curve overlaps GMM. The PR reference is 75 frauds in 56,962 transactions (0.132%).</p>
+</div>
+  <footer class="sf"><span>Card Fraud Triage · Team T110</span><span>Notebook 3 · Held-out curves</span></footer>
+</article>
+
+<article class="slide phase2" id="s19">
+  <header class="sh"><span class="sn">19</span><h2>Test triage at validation FPR budgets</h2></header>
+  <div class="sb">
+  <p class="body">Cutoffs are fixed using legitimate validation rows. Test FPR is measured against 56,887 legitimate test rows.</p>
+  <table class="tbl"><thead><tr><th>Model</th><th>Val FPR budget</th><th>Test TP</th><th>Test FP</th><th>Test FPR</th><th>Recall</th><th>Precision</th></tr></thead><tbody>
+<tr><td>GMM</td><td>0.10%</td><td>57</td><td>35</td><td>0.0615%</td><td>76.00%</td><td>61.96%</td></tr>
+<tr><td>GMM</td><td>0.50%</td><td>59</td><td>192</td><td>0.3375%</td><td>78.67%</td><td>23.51%</td></tr>
+<tr><td>GMM</td><td>1.00%</td><td>59</td><td>346</td><td>0.6082%</td><td>78.67%</td><td>14.57%</td></tr>
+<tr><td>AE</td><td>0.10%</td><td>22</td><td>30</td><td>0.0527%</td><td>29.33%</td><td>42.31%</td></tr>
+<tr><td>AE</td><td>0.50%</td><td>53</td><td>141</td><td>0.2479%</td><td>70.67%</td><td>27.32%</td></tr>
+<tr><td>AE</td><td>1.00%</td><td>55</td><td>346</td><td>0.6082%</td><td>73.33%</td><td>13.72%</td></tr>
+<tr><td>Hybrid</td><td>0.10%</td><td>57</td><td>35</td><td>0.0615%</td><td>76.00%</td><td>61.96%</td></tr>
+<tr><td>Hybrid</td><td>0.50%</td><td>59</td><td>192</td><td>0.3375%</td><td>78.67%</td><td>23.51%</td></tr>
+<tr><td>Hybrid</td><td>1.00%</td><td>59</td><td>346</td><td>0.6082%</td><td>78.67%</td><td>14.57%</td></tr></tbody></table>
+  <p class="body">At the tightest budget GMM catches 57 frauds versus 22 for AE. At the 0.50% budget, AE has higher precision and lower recall.</p>
+</div>
+  <footer class="sf"><span>Card Fraud Triage · Team T110</span><span>Notebook 3 · Locked cutoffs and realized FPR</span></footer>
+</article>
+
+<article class="slide phase2" id="s20">
+  <header class="sh"><span class="sn">20</span><h2>Review queues and fraud overlap</h2></header>
+  <div class="sb">
+  <div class="sec">Precision / recall at fixed analyst capacity</div>
+  <table class="tbl"><thead><tr><th>Queue size</th><th>GMM</th><th>AE</th><th>Hybrid</th></tr></thead><tbody>
+<tr><td>50</td><td>58.0% / 38.7%</td><td>40.0% / 26.7%</td><td>58.0% / 38.7%</td></tr>
+<tr><td>100</td><td>57.0% / 76.0%</td><td>35.0% / 46.7%</td><td>57.0% / 76.0%</td></tr>
+<tr><td>200</td><td>29.0% / 77.3%</td><td>26.5% / 70.7%</td><td>29.0% / 77.3%</td></tr>
+<tr><td>500</td><td>11.8% / 78.7%</td><td>11.8% / 78.7%</td><td>11.8% / 78.7%</td></tr></tbody></table>
+  <div class="sec">Fraud overlap across 75 cases</div>
+  <table class="tbl"><thead><tr><th>Rule</th><th>Both</th><th>GMM only</th><th>AE only</th><th>Missed</th></tr></thead><tbody>
+<tr><td>0.10% val FPR</td><td>22</td><td>35</td><td>0</td><td>18</td></tr>
+<tr><td>Top 100</td><td>35</td><td>22</td><td>0</td><td>18</td></tr></tbody></table>
+  <p class="body">Both detectors missed the same 18 frauds under either rule. Shared misses had less negative median V14 and V12, and higher median V17, than the GMM-only hits.</p>
+</div>
+  <footer class="sf"><span>Card Fraud Triage · Team T110</span><span>Notebook 3 · Queue evaluation and disagreement audit</span></footer>
+</article></main>
+<script>
+const slides = Array.from(document.querySelectorAll('.slide'));
+let index = 0;
+function go(delta) {
+  index = Math.min(Math.max(0, index + delta), slides.length - 1);
+  slides[index].scrollIntoView({ behavior: 'smooth' });
+  document.querySelector('#slide-ctr').textContent = (index + 1) + ' / ' + slides.length;
+}
+document.addEventListener('keydown', ({key}) => {
+  if (key === 'ArrowLeft') go(-1);
+  if (key === 'ArrowRight') go(1);
+});
+if (typeof Chart !== 'undefined') {
+  Chart.defaults.animation = false;
+  Chart.defaults.maintainAspectRatio = false;
+  Chart.defaults.font.size = 15;
+  Chart.defaults.color = '#334155';
+  const blue = '#2563eb', gold = '#a04b00';
+  new Chart('bottleneck', {
+    type: 'line',
+    data: {
+      labels: [4, 8, 12, 16],
+      datasets: [
+        {label:'Legitimate validation MSE', data:[.7418,.5929,.4860,.5121], borderColor:blue, backgroundColor:blue, pointRadius:5},
+        {label:'Validation AP', data:[.0478,.0683,.1222,.0785], borderColor:gold, backgroundColor:gold, borderDash:[7,4], pointRadius:5, yAxisID:'ap'},
+      ],
+    },
+    options: {scales: {
+      x:{title:{display:true,text:'Latent dimensions'}},
+      y:{min:.4,max:.8,title:{display:true,text:'Mean squared error'}},
+      ap:{position:'right',min:0,max:.16,title:{display:true,text:'Average precision'},grid:{drawOnChartArea:false}},
+    }},
+  });
+  new Chart('attribution', {
+    type:'bar',
+    data:{
+      labels:['V14','V17','V12','V10','V16','V3','V4','V7','V11','V9'],
+      datasets:[
+        {label:'Test fraud',data:[39.0,34.2506,16.5218,16.4190,15.4536,9.8601,7.2553,6.4272,5.6463,5.4359],backgroundColor:gold},
+        {label:'Test legitimate',data:[.3164,.2494,.2763,.2267,.3648,1.2007,.3461,.3577,.6946,.3259],backgroundColor:blue},
+      ],
+    },
+    options:{scales:{y:{beginAtZero:true,title:{display:true,text:'Mean squared reconstruction error'}}}},
+  });
+}
+</script>
+</body>
+</html>

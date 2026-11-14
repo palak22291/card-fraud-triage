@@ -1,4 +1,4 @@
-# Card Fraud Triage: Unsupervised Density-Based Anomaly Detection
+# Card Fraud Triage
 
 <div align="center">
 
@@ -9,7 +9,7 @@
 ![Jupyter](https://img.shields.io/badge/Jupyter-F3762D?style=for-the-badge&logo=jupyter&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)
 
-**An end-to-end unsupervised anomaly detection and alert triage pipeline for credit card fraud detection using full-covariance Gaussian Mixture Models (GMM) on severely imbalanced financial transaction streams.**
+**Card fraud triage with a full-covariance Gaussian mixture model (GMM), a deep autoencoder (AE), and validation-calibrated review thresholds.**
 
 </div>
 
@@ -19,9 +19,27 @@
 
 Credit card fraud detection operates under extreme class imbalance (`0.173%` positive fraud rate, or a `577.9 : 1` legitimate-to-fraud ratio) and non-stationary attacker behavior. Supervised classifiers trained on historical fraud labels frequently overfit to known attack signatures and degrade when confronted with novel fraud patterns.
 
-This project implements a strictly **unsupervised density estimation and alert triage framework** using **Gaussian Mixture Models (GMM)**. By fitting a multimodal probability density exclusively on chronological legitimate transactions across 29 behavioral features (`V1`-`V28` and `Amount`), the system scores incoming transactions via negative log-likelihood (`-log p(x)`).
+Phase 1 fits a GMM on chronological legitimate transactions and ranks anomalies by negative log likelihood. Phase 2 compares that saved model with a 12-dimensional autoencoder trained on deduplicated legitimate rows. It also selects a standardized score blend by validation average precision (AP).
 
-### Results at a Glance
+### Phase 2 held-out comparison
+
+| Model | Test AP (PR-AUC) | Test ROC-AUC | TP / FP at 0.10% validation FPR | Top-100 precision / recall |
+| :--- | ---: | ---: | ---: | ---: |
+| GMM (10 components) | 0.4833 | 0.9106 | 57 / 35 | 57.00% / 76.00% |
+| Autoencoder (12D) | 0.2453 | 0.9274 | 22 / 30 | 35.00% / 46.67% |
+| Validation-selected hybrid | 0.4833 | 0.9106 | 57 / 35 | 57.00% / 76.00% |
+
+The validation sweep selected a GMM weight of 1.00. The hybrid therefore gives the same ranking and alert decisions as GMM on test. At the 0.10% validation budget and in Top 100, every AE hit is also a GMM hit. Both models miss the same 18 test frauds under either rule.
+
+The 12D AE had the best validation AP and legitimate MSE among the six AE configurations. The latent-space clustering achieved a Silhouette score of 0.1836 and Davies–Bouldin index of 1.5472. The standardized 29D GMM assignments scored 0.0364 and 4.4603, respectively. The two spaces use different assignment algorithms.
+
+- [Executed Phase 2 comparison notebook](notebooks/phase2_dl_03_gmm_vs_ae_triage.ipynb)
+- [Two-column IEEE report](docs/phase2_dl_ieee/main.pdf) · [LaTeX source](docs/phase2_dl_ieee/main.tex)
+- [Combined Phase 1 and Phase 2 presentation](docs/phase2_dl_presentation/Card_Fraud_Triage_Presentation.pdf) · [Phase 2 slide source](docs/phase2_dl_presentation/presentation.html)
+
+### Phase 1 GMM results
+
+Phase 1 computes PR area by trapezoidal integration. The Phase 2 table uses non-interpolated AP.
 
 | Metric | Value | Operational Interpretation |
 | :--- | :---: | :--- |
@@ -68,19 +86,31 @@ card-fraud-triage/
 │   └── processed/
 │       ├── .gitkeep                     # Preserves directory structure in fresh clones
 │       ├── train_legit.csv              # 170,524 legit rows x 29 features (git-ignored)
+│       ├── train_legit_dedup.csv        # 165,279 distinct legitimate vectors (git-ignored)
 │       ├── val.csv                      # 56,961 rows x 30 cols [29 features + Class]
 │       └── test.csv                     # 56,962 rows x 30 cols [29 features + Class]
 ├── models/
+│   ├── best_autoencoder.pt              # Saved 12D AE checkpoint
+│   ├── scaler_dedup.joblib               # AE scaler fitted on deduplicated rows
 │   ├── scaler.joblib                    # Fitted StandardScaler (29 features)
 │   └── best_gmm.joblib                  # Fitted GaussianMixture (k=10, full covariance)
 ├── notebooks/
-│   ├── eda_and_quality.ipynb           # Class imbalance, amount skewness, PCA separation
-│   ├── gmm_model_selection.ipynb        # AIC/BIC sweep, training, validation calibration
-│   └── final_evaluation.ipynb           # Held-out test PR/ROC curves & triage tables
+│   ├── phase1_ml_01_eda_and_quality.ipynb
+│   ├── phase1_ml_02_gmm_selection.ipynb
+│   ├── phase1_ml_03_gmm_evaluation.ipynb
+│   ├── phase2_dl_01_autoencoder_training.ipynb
+│   ├── phase2_dl_02_unsupervised_metrics.ipynb
+│   └── phase2_dl_03_gmm_vs_ae_triage.ipynb
+├── docs/
+│   ├── phase1_ml/
+│   ├── phase2_dl_ieee/
+│   └── phase2_dl_presentation/
 ├── src/
 │   ├── __init__.py                      # Python package marker
-│   ├── data_audit.py                    # Schema, integrity, and invariant assertions
-│   └── preprocess.py                    # Chronological splitting and feature pruning
+│   ├── autoencoder.py
+│   ├── data_audit.py
+│   ├── preprocess.py
+│   └── unsupervised_metrics.py
 ├── .gitignore
 ├── LICENSE
 ├── requirements.txt
@@ -230,23 +260,34 @@ pip install -r requirements.txt
 2. Place `creditcard.csv` inside `data/raw/` and execute the validation and preprocessing scripts:
 ```bash
 python src/data_audit.py
-python src/preprocess.py
+python -m src.preprocess
 ```
 
-### 3. Execute Training & Evaluation Notebooks
+### 3. Reproduce Phase 2 triage
+
+From the repository root, execute the comparison with the checked-in checkpoints and training scalers.
+
 ```bash
-jupyter notebook
+jupyter nbconvert --to notebook --execute --inplace notebooks/phase2_dl_03_gmm_vs_ae_triage.ipynb
 ```
-1. **`notebooks/eda_and_quality.ipynb`**: Exploratory analysis of class imbalance, transaction amount skewness, and PCA density separation.
-2. **`notebooks/gmm_model_selection.ipynb`**: Runs the $k=1 \dots 10$ AIC/BIC sweep, trains the $k=10$ (`n_init=5`) GMM, evaluates on `val.csv`, and exports `models/scaler.joblib` and `models/best_gmm.joblib`.
-3. **`notebooks/final_evaluation.ipynb`**: Evaluates saved artifacts on `test.csv`, plots PR and ROC curves, and reproduces all operational triage tables.
+
+The notebook locks z-score parameters, the blend weight and all three operating cutoffs before opening the test split. Validation labels select the blend by AP. Legitimate validation rows determine the FPR cutoffs. Test labels measure performance and disagreement. Fraud indices are zero-based positions in `test.csv`, excluding its header.
+
+Use `jupyter lab` to browse the notebooks. The two earlier Phase 2 notebooks contain the saved training sweep, feature attribution, clustering metrics and train-quantile pseudo-label results. The training notebook writes the AE checkpoint if rerun.
+
+### 4. Compile the IEEE report
+
+```bash
+cd docs/phase2_dl_ieee
+tectonic main.tex
+```
 
 ---
 
 ## Limitations & Future Work
 
 - **Static Benchmark Dataset:** The ULB dataset captures two days of European card transactions from September 2013. Production payment systems experience concept drift and seasonal shifts, requiring sliding-window retraining and online density adaptation.
-- **Comparative Unsupervised Baselines:** Phase-2 extensions will benchmark the full-covariance GMM against Isolation Forests, One-Class SVMs, and Deep Autoencoder reconstruction error models under identical chronological splits.
+- **Single held-out window:** The Phase 2 comparison uses one saved fit per model and 75 test frauds. Future windows may have different score distributions, alert rates, and review yield.
 - **Skewed Amount Transformation:** While `StandardScaler` standardizes feature variance, `Amount` exhibits heavy right-skewness (`$0` to `$25,691`). Applying a `log1p` transformation or `RobustScaler` to `Amount` prior to density estimation may further sharpen tail separation.
 - **Feature Interpretability:** Because `V1`-`V28` are anonymized PCA projections, component-level attributions cannot be mapped directly to raw merchant categories or cardholder velocity rules without access to upstream pre-PCA attributes.
 
