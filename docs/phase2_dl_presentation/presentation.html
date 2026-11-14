@@ -229,9 +229,10 @@ p.body { font-size: 15px; color: var(--text); line-height: 1.65; }
 <tr><td>AE</td><td>0.2453</td><td>0.9274</td></tr>
 <tr><td>Hybrid</td><td>0.4833</td><td>0.9106</td></tr></tbody></table>
       <p class="body">The AE has higher ROC-AUC. GMM has higher average precision.</p>
+      <p class="body" style="font-size: 13.5px; color: var(--muted); margin-top: 4px;">*Note: Phase 2 reports scikit-learn non-interpolated Average Precision (AP = 0.4833); Phase 1 evaluated trapezoidal PR-AUC (0.4736).*</p>
     </section>
   </div>
-  <div class="note blue">Fit score z-scaling on validation and select α by validation AP. At α = 1.00 the hybrid gives the same ranks and triage decisions as GMM.</div>
+  <div class="note blue">Fit score z-scaling on validation and select α by validation AP. At α = 1.00 the hybrid reproduces the pure GMM ranking and triage decisions.</div>
 </div>
   <footer class="sf"><span>Card Fraud Triage · Team T110</span><span>Notebook 3 · Validation selection and held-out ranking</span></footer>
 </article>

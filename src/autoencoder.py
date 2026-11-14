@@ -92,15 +92,22 @@ class FraudAutoencoder(nn.Module):
         return np.concatenate(scores, axis=0)
 
     @torch.no_grad()
-    def feature_squared_errors(self, X: np.ndarray, device: str = "cpu") -> np.ndarray:
+    def feature_squared_errors(self, X: np.ndarray, device: str = "cpu", batch_size: int = 2048) -> np.ndarray:
         """
         Return per-feature squared error matrix (N x 29): (x_ij - x_hat_ij)^2
         for whiteboard interpretability and root-cause feature attribution.
+        Batched to prevent GPU/MPS memory spikes on large evaluation volumes.
         """
         self.eval()
-        tensor_x = torch.tensor(X, dtype=torch.float32, device=device)
-        x_hat, _ = self.forward(tensor_x)
-        return ((tensor_x - x_hat) ** 2).cpu().numpy()
+        tensor_x = torch.tensor(X, dtype=torch.float32)
+        loader = DataLoader(TensorDataset(tensor_x), batch_size=batch_size, shuffle=False)
+        matrix = []
+        for (batch_x,) in loader:
+            batch_x = batch_x.to(device)
+            x_hat, _ = self.forward(batch_x)
+            sq_err = (batch_x - x_hat) ** 2
+            matrix.append(sq_err.cpu().numpy())
+        return np.concatenate(matrix, axis=0)
 
     @torch.no_grad()
     def extract_latent(self, X: np.ndarray, device: str = "cpu", batch_size: int = 2048) -> np.ndarray:
